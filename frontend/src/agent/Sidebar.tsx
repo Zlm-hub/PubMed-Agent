@@ -165,11 +165,14 @@ export default function Sidebar({
               <div className="space-y-0.5 font-mono text-muted">
                 <div>backend/cache/*.json</div>
                 <div>docs/01-overview.png</div>
-                <div>docs/02-visualization.png</div>
-                <div>docs/03-top100.png</div>
+                <div>docs/02-charts.png</div>
+                <div>docs/03-wordcloud.png</div>
+                <div>docs/04-top100.png</div>
+                <div>docs/05-agent-home.png</div>
+                <div>docs/06-agent-flow.png</div>
               </div>
               <div className="mt-1.5 text-muted/80">
-                预缓存数据集 3 个（对应预置关键词）；交付截图 3 张。Top100 CSV 在报告视图内导出。
+                预缓存数据集 3 个（对应预置关键词）；交付截图 6 张。Top100 CSV 在报告视图内导出。
               </div>
               <button type="button" onClick={onOpenReport} className="mt-2 w-full rounded border border-line bg-white py-1 text-muted transition-colors hover:border-brand hover:text-brand">
                 在报告中查看
