@@ -172,6 +172,16 @@ PubMed 官方不返回影响因子与分区，因此指标数据集在**构建�
 - **性能**：3 个预设命中预缓存 **6–24ms 秒回**（断网也能演示）；前端 `npm run build` 591 模块通过，产物 gzip 226 KB。
 - **渲染**：已用真实浏览器（headless Chrome）逐屏截图核验外壳欢迎页、对话流工具卡片、报告总览/图表/词云/Top100，无空白面板（截图见 `docs/`）。
 
+## 开发流程约定
+
+仓库：`git@github.com:Zlm-hub/PubMed-Agent.git`（走 SSH；本机 HTTPS 直连 GitHub 会被 reset）。
+
+- 主干为 `main`，所有改动经分支合入，不直接在 `main` 上改。
+- 分支命名：`feat/<scope>`、`fix/<scope>`、`refactor/<scope>`、`docs/<scope>`、`chore/<scope>`。
+- 提交信息用 Conventional Commits，标题一行说清「做了什么」，正文写「为什么这么做」与影响面。
+- 提交前跑通：前端 `npm run build`（含 `tsc -b` 类型检查）、后端 `curl /api/health` 与一次 `/api/analyze` 真实请求。
+- 密钥与运行时不入库：`backend/.env`、`backend/cache/`、`frontend/dist/`、`node_modules/` 见 `.gitignore`。
+
 ## 已知优化点（非阻塞）
 - **工具卡片是前端回放而非服务端流式**（后端 `/api/analyze` 为一次性返回）。要变成真流式需改 SSE 增量推送；这是实现细节，不影响功能完整度，但演示时若被问需如实说明。
 - IF 指标覆盖率受数据集规模限制（1324 本），长尾小刊仍显示"未知"——属设计内降级，前端已明示覆盖率。进一步提升需扩大 OpenAlex 抓取页数（受其单 IP 限流约束，建议分批多次）。
