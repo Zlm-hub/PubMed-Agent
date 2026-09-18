@@ -1,0 +1,32 @@
+# ---- 依赖 ----
+node_modules/
+backend/.venv/
+
+# ---- 构建产物（可重新生成）----
+frontend/dist/
+frontend/vite.config.js
+frontend/vite.config.d.ts
+frontend/vite.config.js.timestamp-*.mjs
+*.tsbuildinfo
+
+# ---- 环境变量（含密钥，切勿提交）----
+backend/.env
+
+# ---- 运行时数据 ----
+backend/cache/
+backend/data/*.bak*
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- 本地调试产物 ----
+_*.png
+_dom*.html
