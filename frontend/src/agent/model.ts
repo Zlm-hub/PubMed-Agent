@@ -195,7 +195,7 @@ export const QUICK_STARTS: QuickStart[] = [
   { id: "search", label: "文献检索", desc: "关键词 → PubMed 全量分析", keyword: "Alzheimer", focus: "all" },
   { id: "stats", label: "统计概览", desc: "数量 / 年份 / 分区 / 影响因子", keyword: "CRISPR cancer", focus: "stats" },
   { id: "cloud", label: "词云与趋势", desc: "关键词词频 + 研究方向聚类", keyword: "COVID-19 vaccine", focus: "cloud" },
-  { id: "top100", label: "影响力 Top100", desc: "近 5 年 IF 排序，可导出", keyword: "cancer immunotherapy", focus: "top100" },
+  { id: "top100", label: "影响力 Top100", desc: "近 5 年影响因子排序，可导出", keyword: "cancer immunotherapy", focus: "top100" },
   { id: "review", label: "中文综述", desc: "基于摘要生成分点综述", keyword: "gut microbiome", focus: "review" },
   { id: "cn", label: "中文检索", desc: "中文术语自动改写为英文检索（渐冻症 → ALS）", keyword: "渐冻症", focus: "all" },
   { id: "design", label: "设计思考", desc: "技术选型与取舍留痕", keyword: "", focus: "all" },
@@ -235,7 +235,7 @@ export function buildTools(query: string, maxResults = DEFAULT_MAX_RESULTS, rawI
     {
       id: uid(),
       name: "metrics.annotate",
-      title: "补期刊指标（篇均被引 + 分区）",
+      title: "补期刊影响因子与分区",
       args: { source: "journal_metrics.db（SCImago + OpenAlex）" },
       status: "pending",
     },
@@ -325,7 +325,7 @@ export function buildThinking(query: string, maxResults = DEFAULT_MAX_RESULTS): 
   return [
     `收到关键词「${query}」，准备走完整分析链路（检索 → 指标 → 统计 → 综述）。`,
     `先查本地预缓存，命中则直接复用；未命中再走 NCBI E-utilities，retmax=${maxResults}。`,
-    `期刊指标（近 2 年篇均被引 + SCImago 官方分区）用本地 SQLite 指标库匹配，匹配不到不猜——降级为「未知」，避免给出假分区。`,
+    `期刊影响因子与分区（SCImago 官方分区优先）用本地 SQLite 指标库匹配，匹配不到不猜——降级为「未知」，避免给出假分区。`,
     `综述优先取有摘要的文献，未配置大模型密钥时用真实统计结果兜底，并在响应里标记 mock 字段。`,
   ];
 }

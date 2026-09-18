@@ -443,9 +443,9 @@ function ResultBlock({
   const statsBlock = (
     <div key="stats" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       <Mini label="命中总量" value={result.total.toLocaleString()} />
-      <Mini label="指标覆盖" value={`${coverage}%`} sub={`${ifs.known_count} / ${result.returned} 篇`} />
-      <Mini label="篇均被引均值" value={ifs.mean != null ? String(ifs.mean) : "—"} sub={ifs.median != null ? `中位 ${ifs.median}` : undefined} />
-      <Mini label="最高篇均被引" value={topJournal?.impact_factor != null ? String(topJournal.impact_factor) : "—"} sub={topJournal?.journal} />
+      <Mini label="影响因子覆盖" value={`${coverage}%`} sub={`${ifs.known_count} / ${result.returned} 篇`} />
+      <Mini label="平均影响因子" value={ifs.mean != null ? String(ifs.mean) : "—"} sub={ifs.median != null ? `中位 ${ifs.median}` : undefined} />
+      <Mini label="最高影响因子" value={topJournal?.impact_factor != null ? String(topJournal.impact_factor) : "—"} sub={topJournal?.journal} />
     </div>
   );
 

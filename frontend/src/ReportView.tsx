@@ -132,7 +132,7 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
   function exportCsv() {
     if (!data) return;
     const rows = data.stats.top100;
-    const header = ["排名", "PMID", "标题", "期刊", "年份", "篇均被引(2年)", "分区", "窗口", "链接"];
+    const header = ["排名", "PMID", "标题", "期刊", "年份", "影响因子", "分区", "窗口", "链接"];
     const lines = rows.map((r: TopItem, i) =>
       [i + 1, r.pmid, `"${(r.title || "").replace(/"/g, '""')}"`, r.journal, r.year ?? "", r.impact_factor ?? "", r.quartile ?? "", r.in_recent_5y === false ? "补足" : "近5年", r.url].join(",")
     );
@@ -194,9 +194,9 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
           </div>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 max-w-4xl mx-auto mt-12">
-            <Feature icon="stats" title="F1 统计概览" desc="文献总量、年份分布、期刊分区、篇均被引均值/中位/极值" />
+            <Feature icon="stats" title="F1 统计概览" desc="文献总量、年份分布、期刊分区、影响因子均值/中位/极值" />
             <Feature icon="cloud" title="F2 可视化" desc="关键词词云 + MeSH 研究方向标签，纯统计聚类、结果可复现" />
-            <Feature icon="top100" title="F3 影响力排序" desc="近 5 年篇均被引 Top 100 表格，支持一键导出 CSV" />
+            <Feature icon="top100" title="F3 影响力排序" desc="近 5 年影响因子 Top 100 表格，支持一键导出 CSV" />
             <Feature icon="review" title="F4 中文综述" desc="基于 Top 摘要生成中文分点综述，每条论断标注 PMID 出处" />
           </div>
 
@@ -294,15 +294,15 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <Card label="命中总量" value={data.total.toLocaleString()} />
                 <Card
-                  label="IF 指标覆盖"
+                  label="影响因子覆盖"
                   value={`${ifs?.known_count ?? 0} 篇`}
                   sub={`覆盖率 ${data.returned ? Math.round(((ifs?.known_count ?? 0) / data.returned) * 100) : 0}% · 其余未收录`}
                 />
-                <Card label="平均篇均被引" value={ifs?.mean != null ? String(ifs.mean) : "—"} sub={ifs?.median != null ? `中位数 ${ifs.median}` : undefined} />
-                <Card label="最高篇均被引文献" value={topJournal?.impact_factor != null ? String(topJournal.impact_factor) : "—"} sub={topJournal?.journal} />
+                <Card label="平均影响因子" value={ifs?.mean != null ? String(ifs.mean) : "—"} sub={ifs?.median != null ? `中位数 ${ifs.median}` : undefined} />
+                <Card label="最高影响因子文献" value={topJournal?.impact_factor != null ? String(topJournal.impact_factor) : "—"} sub={topJournal?.journal} />
               </div>
               <div className="text-xs text-muted leading-6">
-                口径说明：指标为期刊「近 2 年篇均被引」（SCImago Citations/Doc(2y) 优先），分区为 SCImago 官方发布（OpenAlex 兜底条目为推算），均非 JCR 影响因子。
+                数据来源：影响因子与分区来自 SCImago 2025 / OpenAlex 开放数据（近 2 年窗口），分区为 SCImago 官方发布（OpenAlex 兜底条目为推算），数值与 JCR 官方口径存在差异，仅供参考。
               </div>
 
               <section className="rounded-lg border border-line bg-white p-5 shadow-card">
@@ -361,7 +361,7 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="flex items-center gap-2 text-[15px] font-semibold">
                     <span className="h-3.5 w-1 rounded-full bg-brand" aria-hidden="true" />
-                    篇均被引 Top {data.stats.top100.length}（近 5 年优先）
+                    影响因子 Top {data.stats.top100.length}（近 5 年优先）
                   </h2>
                   <button className="text-xs rounded-md border border-line px-3 py-1.5 text-muted transition-colors hover:text-brand hover:border-brand" onClick={exportCsv}>
                     导出 CSV
@@ -382,7 +382,7 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
                         <th className="px-3 py-2 font-medium">标题</th>
                         <th className="px-3 py-2 font-medium">期刊</th>
                         <th className="px-3 py-2 font-medium">年份</th>
-                        <th className="px-3 py-2 font-medium">篇均被引</th>
+                        <th className="px-3 py-2 font-medium">影响因子</th>
                         <th className="px-3 py-2 font-medium">分区</th>
                       </tr>
                     </thead>

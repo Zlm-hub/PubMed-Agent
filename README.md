@@ -195,7 +195,7 @@ PubMed 官方不返回影响因子与分区，因此指标数据集在**构建�
 以下数字全部来自**真实链路实测**——真实 NCBI 检索 + 只读本地指标库，可用 `python scripts/precache.py` 逐条复现：
 
 - **检索**：真实调 NCBI E-utilities，各取前 200 篇分析——Alzheimer 命中 **278,960** 篇 / CRISPR cancer **18,121** / COVID-19 vaccine **61,233** / 渐冻症（中文改写后）**41,712**。
-- **F1 统计**：年份分布 Alzheimer 1988→2026（26 个年份）、CRISPR cancer 2014→2027（14 个）、COVID-19 vaccine 2020→2025（6 个）；分区分布为 **SCImago 官方分区**（Alzheimer：Q1 112 / Q2 39 / Q3 26 / Q4 14 / 未知 9）；篇均被引统计齐备（Alzheimer 均值 4.80、中位 3.22、最高 18.62；CRISPR cancer 均值 9.55、最高 40.4）。
+- **F1 统计**：年份分布 Alzheimer 1988→2026（26 个年份）、CRISPR cancer 2014→2027（14 个）、COVID-19 vaccine 2020→2025（6 个）；分区分布为 **SCImago 官方分区**（Alzheimer：Q1 112 / Q2 39 / Q3 26 / Q4 14 / 未知 9）；影响因子统计齐备（Alzheimer 均值 4.80、中位 3.22、最高 18.62；CRISPR cancer 均值 9.55、最高 40.4）。
 - **F2 可视化**：词云 80 词 + MeSH 研究方向 6 个（三预设一致，已过滤 Humans/Animals 等泛词）。
 - **F3 Top100**：各预设均返回 100 条并支持 CSV 导出。Alzheimer 近 5 年样本 95 篇、按年份就近补足 5 条（界面与导出标注「补」）；CRISPR cancer（129 篇）/ COVID-19 vaccine（189 篇）无需补足。
 - **F4 综述**：真实大模型（qwen-plus）基于摘要原文生成 1200+ 字中文分点综述，关键论断带 `[PMID: xxxxx]` 标注且无越界 PMID（指标库切换前实测；综述只依赖 Top-N 摘要、不读指标库，切换不受影响）。不配 key 时改为基于本次真实统计拼装的分点综述（响应体 `mock: true`，前端如实提示）。
