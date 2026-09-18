@@ -186,7 +186,9 @@ export default function AgentShell() {
         </header>
 
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {tab === "chat" && (
+          {/* 三个视图常驻挂载、只切换可见性：切走再切回不丢会话与报告状态，
+              也不会因组件重挂而重放 runRequest（实测反馈：切个视图就整链重跑） */}
+          <div className={tab === "chat" ? "flex min-h-0 flex-1 flex-col" : "hidden"}>
             <ChatPanel
               draft={draft}
               setDraft={setDraft}
@@ -205,21 +207,25 @@ export default function AgentShell() {
               onOpenReport={openReport}
               onPick={handleQuickStart}
             />
-          )}
+          </div>
 
-          {tab === "report" && (
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <ReportView injectQuery={injectQuery} onQueryInjected={() => setInjectQuery("")} />
-            </div>
-          )}
+          <div
+            className={
+              tab === "report" ? "flex min-h-0 flex-1 flex-col overflow-y-auto" : "hidden"
+            }
+          >
+            <ReportView injectQuery={injectQuery} onQueryInjected={() => setInjectQuery("")} />
+          </div>
 
-          {tab === "design" && (
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto w-full max-w-5xl px-6 py-8">
-                <Thinking />
-              </div>
+          <div
+            className={
+              tab === "design" ? "flex min-h-0 flex-1 flex-col overflow-y-auto" : "hidden"
+            }
+          >
+            <div className="mx-auto w-full max-w-5xl px-6 py-8">
+              <Thinking />
             </div>
-          )}
+          </div>
         </main>
       </div>
     </div>
