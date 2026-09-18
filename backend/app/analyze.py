@@ -48,6 +48,8 @@ def enrich_articles(articles: list[dict]) -> list[dict]:
         a["impact_factor"] = m["if"]
         a["quartile"] = m["quartile"]
         a["metric_known"] = m["known"]
+    # 自学习：ISSN 已命中的文献顺手把 ISO 缩写也建成别名索引（失败静默）
+    metrics.learn(articles)
     return articles
 
 

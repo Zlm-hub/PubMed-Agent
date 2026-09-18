@@ -10,11 +10,20 @@ frontend/vite.config.js.timestamp-*.mjs
 *.tsbuildinfo
 
 # ---- 环境变量（含密钥，切勿提交）----
+# 用户放在仓库根、充当「全局环境变量」的 .env 内含真实密钥，必须挡住；
+# 只放行示例文件。注意顺序：否定规则要写在 .env.* 之后才生效。
+.env
+.env.*
+!.env.example
 backend/.env
 
 # ---- 运行时数据 ----
+backend/logs/
 backend/cache/
 backend/data/*.bak*
+# 期刊指标 SQLite（可由 scripts/build_metrics_db.py 重新生成；是否随包发布由提交者决定，
+# 默认不入库以控制仓库体积，需要「随包发布」时再显式 git add -f）
+backend/data/*.db
 
 # ---- Python ----
 __pycache__/
@@ -30,3 +39,7 @@ Thumbs.db
 # ---- 本地调试产物 ----
 _*.png
 _dom*.html
+
+# ---- 本地流水线产物 / Office 临时锁文件 ----
+output/
+~$*

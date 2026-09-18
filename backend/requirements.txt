@@ -1,4 +1,32 @@
-fastapi
-uvicorn[standard]
-httpx
-python-dotenv
+# =============================================================================
+#  PubMed Analytics · 后端依赖
+# -----------------------------------------------------------------------------
+#  Python：>= 3.10（本项目开发 / 验证环境为 3.13.14）
+#
+#  安装：
+#      python -m venv .venv
+#      .venv\Scripts\python.exe -m pip install -r requirements.txt      # Windows
+#      .venv/bin/python -m pip install -r requirements.txt              # macOS / Linux
+#
+#  启动：
+#      .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+#
+#  说明：
+#    1. 下面只列「源码里直接 import 的包」，版本按实测环境钉死，保证可复现。
+#    2. 其余依赖（starlette / anyio / h11 / httpcore / certifi / idna / click /
+#       watchfiles / websockets / httptools / PyYAML / typing-extensions 等）
+#       由下列包自动携带，不需要也不应该手写进本文件。
+#    3. 不需要任何第三方数据处理库：CSV/XML/JSON、统计聚合、并发全部走标准库
+#       （xml.etree / csv / json / asyncio / collections / urllib）。
+# =============================================================================
+
+# --- Web 框架与服务端 ---------------------------------------------------------
+fastapi==0.141.1            # HTTP 接口框架：路由、CORS 中间件、异常处理
+uvicorn[standard]==0.53.0   # ASGI 服务器；[standard] 附带 httptools 加速与 watchfiles 热重载
+pydantic==2.13.5            # 请求体校验与类型约束（app/main.py: AnalyzeRequest）
+
+# --- 网络客户端 ---------------------------------------------------------------
+httpx==0.28.1               # 异步 HTTP：NCBI E-utilities 检索/取回 + 大模型网关调用
+
+# --- 配置与密钥 ---------------------------------------------------------------
+python-dotenv==1.2.3        # 读取项目根目录 .env（读取顺序：环境变量 > .env 文件）

@@ -10,7 +10,7 @@ import re
 
 import httpx
 
-from app import config
+from app import config, monitor
 
 
 def build_prompt(abstracts: list[tuple[str, str]]) -> str:
@@ -20,23 +20,31 @@ def build_prompt(abstracts: list[tuple[str, str]]) -> str:
         lines.append(f"{i}. [PMID:{pmid}] {snippet}")
     joined = "\n".join(lines)
     return (
-        "你是文献综述助手。基于以下 PubMed 摘要，撰写约 500 字的中文综述，"
-        "分 3-5 点，每点聚焦一个研究方向或核心结论；关键论断以 [PMID: xxxxx] 标注出处。"
-        "要求：纯中文、分点、不编造、摘要不足时如实说明。\n\n摘要：\n" + joined
+        "你是文献综述助手。基于以下 PubMed 摘要，撰写约 500 字的中文综述，分 3-5 点，"
+        "每点聚焦一个研究方向或核心结论。要求：纯中文、分点、不编造、摘要不足时如实说明。"
+        "关键论断须标注出处，格式为 [PMID: 39403057]——必须写出完整的 8 位数字 PMID，"
+        "不要只写编号或简写；只能引用上面摘要中出现过的 PMID，不得引用未提供的文献。"
+        "\n\n摘要：\n" + joined
     )
 
 
-def _extract_sources(text: str, fallback: list[str]) -> list[str]:
-    cited = re.findall(r"PMID:\s*(\d+)", text)
-    if cited:
-        # 去重保序
-        seen, out = set(), []
-        for c in cited:
-            if c not in seen:
-                seen.add(c)
-                out.append(c)
-        return out
-    return fallback[:10]
+def _extract_sources(text: str, valid: list[str]) -> list[str]:
+    """抽取正文引用的 PMID，**只保留本次输入摘要里真实存在的那些**。
+
+    模型偶尔会把「同一括号内并列多篇」写成 [PMID:A, PMID:22, PMID:25]——
+    这里的 22/25 是摘要序号而不是 PMID。若照单全收，sources 字段就会混入
+    并不存在的「出处」，与「每条论断带 PMID、不编造」的对外声明冲突。
+    因此用「位数 + 白名单」双重校验：位数挡掉序号，白名单挡掉编造的完整 PMID。
+    """
+    allowed = set(valid)
+    cited = re.findall(r"PMID[:：]\s*(\d{6,9})", text)
+    seen, out = set(), []
+    for c in cited:
+        if c in allowed and c not in seen:
+            seen.add(c)
+            out.append(c)
+    # 一条都没命中（越界或格式不合）时退回首段输入 PMID：宁可少，不可假
+    return out or valid[:10]
 
 
 def _mock_review(context: dict | None, abstracts: list[tuple[str, str]]) -> str:
@@ -91,10 +99,10 @@ def _mock_review(context: dict | None, abstracts: list[tuple[str, str]]) -> str:
         best = ""
         if top100 and top100[0].get("journal"):
             ifv = top100[0].get("impact_factor")
-            best = f"样本中影响因子最高者为 {top100[0]['journal']}" + (f"（IF {ifv}）" if ifv else "") + "。"
+            best = f"样本中篇均被引最高者为 {top100[0]['journal']}" + (f"（IF {ifv}）" if ifv else "") + "。"
         mean, med, mx = ifs.get("mean"), ifs.get("median"), ifs.get("max")
         ifstat = (
-            f"已匹配指标的文献平均影响因子 {mean}、中位 {med}、最高 {mx}"
+            f"已匹配指标的文献平均篇均被引 {mean}、中位 {med}、最高 {mx}"
             if mean is not None
             else "部分文献已匹配到期刊指标"
         )
@@ -107,13 +115,13 @@ def _mock_review(context: dict | None, abstracts: list[tuple[str, str]]) -> str:
     if top100:
         rec = sum(1 for t in top100 if t.get("in_recent_5y"))
         parts.append(
-            f"四、证据基础与时效性：按影响因子排序的前 {len(top100)} 篇高影响力文献中，"
+            f"四、证据基础与时效性：按篇均被引排序的前 {len(top100)} 篇高影响力文献中，"
             f"{rec} 篇发表于近五年，构成当前证据主体；摘要与主题词齐备，可供方法学逐项比对。{cite(3)}"
         )
 
     # 五、挑战与展望
     parts.append(
-        "五、挑战与展望：样本异质性、期刊指标覆盖不全（长尾刊缺少影响因子）以及结论可重复性"
+        "五、挑战与展望：样本异质性、期刊指标覆盖不全（长尾刊缺少篇均被引数据）以及结论可重复性"
         "仍是主要瓶颈；后续宜在更大样本上结合标准化评价体系，对高影响力方向做定量的证据分级。"
     )
     # 不在正文里自述"这是示例综述"：前端有醒目提示、响应体也带 mock 字段，
@@ -130,6 +138,7 @@ async def generate_review(
 
     if config.MOCK_LLM or not config.DASHSCOPE_API_KEY:
         text = _mock_review(context, abstracts)
+        monitor.step("review", "mock.generated", chars=len(text), sources=len(abstracts))
         return {
             "text": text,
             "sources": _extract_sources(text, [pmid for pmid, _ in abstracts]),
@@ -147,15 +156,21 @@ async def generate_review(
         "temperature": 0.3,
         "max_tokens": 900,
     }
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(
-            f"{config.DASHSCOPE_BASE_URL}/chat/completions",
-            headers=headers,
-            json=payload,
-        )
-        r.raise_for_status()
-        data = r.json()
-        text = data["choices"][0]["message"]["content"]
+    t0 = __import__("time").perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                f"{config.DASHSCOPE_BASE_URL}/chat/completions",
+                headers=headers,
+                json=payload,
+            )
+            r.raise_for_status()
+            data = r.json()
+            text = data["choices"][0]["message"]["content"]
+    except Exception as e:  # noqa: BLE001
+        monitor.step("review", "llm.failed", ok=False, exc=True, error=str(e), model=config.LLM_MODEL)
+        raise
+    monitor.step("review", "llm.done", chars=len(text), ms=(  __import__("time").perf_counter() - t0) * 1000, model=config.LLM_MODEL)
 
     sources = _extract_sources(text, [pmid for pmid, _ in abstracts])
     return {"text": text, "sources": sources}

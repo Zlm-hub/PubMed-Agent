@@ -2,11 +2,12 @@
 import asyncio
 import datetime
 import re
+import time
 import xml.etree.ElementTree as ET
 
 import httpx
 
-from . import config
+from . import config, monitor
 
 BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 EFETCH_BATCH = 150
@@ -99,6 +100,7 @@ def _parse_article(article_el) -> dict:
         "abstract": abstract,
         "authors": authors,
         "journal": journal_title or iso or "",
+        "journal_iso": iso or "",
         "issn": issn or "",
         "year": year,
         "pubdate": pubdate,
@@ -163,14 +165,28 @@ async def _efetch_batch(pmids: list[str], api_key: str | None) -> list[dict]:
 
 
 async def search_pubmed(query: str, max_results: int, api_key: str | None = None) -> tuple[int, list[dict]]:
-    """返回 (命中总数, 文章元数据列表)。"""
+    """返回 (命中总数, 文章元数据列表)。每一步落监控日志，失败带堆栈再抛。"""
     api_key = api_key or config.NCBI_API_KEY
-    count, pmids = await _esearch(query, max_results, api_key)
+    t0 = time.perf_counter()
+    try:
+        count, pmids = await _esearch(query, max_results, api_key)
+    except Exception as e:  # noqa: BLE001
+        monitor.step("pubmed", "esearch.failed", ok=False, exc=True, term=query, error=str(e))
+        raise
+    monitor.step("pubmed", "esearch.done", term=query, total=count, ms=(time.perf_counter() - t0) * 1000)
+
     pmids = pmids[:max_results]
     if not pmids:
         return count, []
     # 并发分桶
     batches = [pmids[i : i + EFETCH_BATCH] for i in range(0, len(pmids), EFETCH_BATCH)]
-    results = await asyncio.gather(*[_efetch_batch(b, api_key) for b in batches])
+    t1 = time.perf_counter()
+    try:
+        results = await asyncio.gather(*[_efetch_batch(b, api_key) for b in batches])
+    except Exception as e:  # noqa: BLE001
+        monitor.step("pubmed", "efetch.failed", ok=False, exc=True, batches=len(batches), error=str(e))
+        raise
     articles = [a for sub in results for a in sub]
+    monitor.step("pubmed", "efetch.done", batches=len(batches), parsed=len(articles),
+                 ms=(time.perf_counter() - t1) * 1000)
     return count, articles
