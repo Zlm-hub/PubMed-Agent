@@ -3,9 +3,20 @@
  *
  * 视觉上还原参考产品的「工具调用块」：一行摘要 + 可展开的入参/结果。
  * 状态四态：pending / running / done / error，全部用 SVG 绘制，不依赖字体图标。
+ * 每张卡按工具名配一枚专属图标（对齐后端真实函数），右侧箭头提示可展开。
  */
 import { useState } from "react";
 import type { ToolCall } from "./model";
+import { Icon } from "./Sidebar";
+
+/** 工具完全限定名 -> 图标键；未命中不显示图标 */
+const TOOL_ICON: Record<string, string> = {
+  "pubmed.esearch": "search",
+  "pubmed.efetch": "doc",
+  "metrics.annotate": "tag",
+  "analyze.aggregate": "chart",
+  "review.generate": "review",
+};
 
 function StatusMark({ status }: { status: ToolCall["status"] }) {
   if (status === "running") {
@@ -51,10 +62,11 @@ const LABEL: Record<ToolCall["status"], string> = {
 export default function ToolCard({ tool }: { tool: ToolCall }) {
   const [open, setOpen] = useState(false);
   const running = tool.status === "running";
+  const iconName = TOOL_ICON[tool.name];
 
   return (
     <div
-      className={`rounded-md border bg-white transition-colors ${
+      className={`rounded-md border bg-white shadow-card transition-colors ${
         running ? "border-brand/40" : "border-line"
       }`}
     >
@@ -68,17 +80,37 @@ export default function ToolCard({ tool }: { tool: ToolCall }) {
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-baseline gap-2">
-            <span className="text-sm font-medium text-ink">{tool.title}</span>
-            <span className="truncate font-mono text-[11px] text-muted">{tool.name}</span>
+            <span className="flex items-baseline gap-1.5">
+              {iconName && <Icon name={iconName} className="relative top-0.5 text-muted" />}
+              <span className="text-sm font-medium text-ink">{tool.title}</span>
+            </span>
+            <span className="truncate font-mono text-[11px] text-muted/80">{tool.name}</span>
           </span>
           {tool.result && <span className="mt-0.5 block text-xs leading-5 text-brand">{tool.result}</span>}
         </span>
-        <span className="shrink-0 pt-0.5 text-[11px] text-muted">{LABEL[tool.status]}</span>
+        <span className="flex shrink-0 items-center gap-1.5 pt-0.5 text-[11px] tabular-nums text-muted">
+          {LABEL[tool.status]}
+          {tool.status === "done" && tool.ms != null && <span className="font-mono">{tool.ms} ms</span>}
+          <svg
+            viewBox="0 0 16 16"
+            width="10"
+            height="10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`text-muted/60 transition-transform ${open ? "rotate-90" : ""}`}
+            aria-hidden="true"
+          >
+            <path d="M6 3.5L10.5 8 6 12.5" />
+          </svg>
+        </span>
       </button>
 
       {open && (
         <div className="border-t border-line px-3 py-2">
-          <div className="text-[11px] font-medium text-muted">入参</div>
+          <div className="text-[11px] font-medium tracking-[0.08em] text-muted/80">入参</div>
           <dl className="mt-1 space-y-0.5">
             {Object.entries(tool.args).map(([k, v]) => (
               <div key={k} className="flex gap-2 font-mono text-[11px] leading-5">
@@ -89,7 +121,7 @@ export default function ToolCard({ tool }: { tool: ToolCall }) {
           </dl>
           {tool.notes && tool.notes.length > 0 && (
             <>
-              <div className="mt-2 text-[11px] font-medium text-muted">备注</div>
+              <div className="mt-2 text-[11px] font-medium tracking-[0.08em] text-muted/80">备注</div>
               <ul className="mt-1 space-y-0.5">
                 {tool.notes.map((n) => (
                   <li key={n} className="text-[11px] leading-5 text-muted">

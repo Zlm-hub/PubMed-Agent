@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnalyzeResp } from "../api";
 import ReportView from "../ReportView";
 import Thinking from "../Thinking";
-import Sidebar from "./Sidebar";
+import Sidebar, { Icon } from "./Sidebar";
 import ChatPanel from "./ChatPanel";
 import { clearSessions, Focus, loadSessions, QuickStart, saveSession, Session } from "./model";
 
@@ -17,10 +17,13 @@ const BASE = "http://localhost:8000";
 
 type Tab = "chat" | "report" | "design";
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "chat", label: "对话" },
-  { id: "report", label: "报告" },
-  { id: "design", label: "设计思考" },
+/** 输入框已有内容时，点击「快捷开始」不直接覆盖，而是挂起等用户确认 */
+type PendingSwap = { keyword: string; label: string; focus: Focus };
+
+const TABS: { id: Tab; label: string; icon: string }[] = [
+  { id: "chat", label: "对话", icon: "chat" },
+  { id: "report", label: "报告", icon: "doc" },
+  { id: "design", label: "设计思考", icon: "design" },
 ];
 
 export default function AgentShell() {
@@ -35,7 +38,15 @@ export default function AgentShell() {
   const [injectQuery, setInjectQuery] = useState("");
   const [runRequest, setRunRequest] = useState<{ q: string; n: number } | null>(null);
   const [resetToken, setResetToken] = useState(0);
+  const [pendingSwap, setPendingSwap] = useState<PendingSwap | null>(null);
+  /** 最近一次由「快捷开始」填入的预设词，用于在输入区给出明确提示 */
+  const [filledFrom, setFilledFrom] = useState("");
   const runSeq = useRef(0);
+
+  // 用户一旦改动输入框，就不再是「预设词待发送」状态
+  useEffect(() => {
+    if (filledFrom && draft !== filledFrom) setFilledFrom("");
+  }, [draft, filledFrom]);
 
   useEffect(() => {
     fetch(`${BASE}/api/health`)
@@ -73,17 +84,31 @@ export default function AgentShell() {
     setTab("report");
   }
 
+  /** 确认应用一个快捷开始项：切对话页 + 填预设词 + 设定聚焦维度 */
+  function applyQuickStart(q: PendingSwap) {
+    setTab("chat");
+    setActiveKeyword(q.keyword);
+    setFocus(q.focus);
+    setIntentLabel(q.label);
+    setDraft(q.keyword);
+    setFilledFrom(q.keyword);
+    setPendingSwap(null);
+  }
+
   function handleQuickStart(q: QuickStart) {
     if (q.planned) return;
     if (!q.keyword) {
       setTab("design");
       return;
     }
-    setTab("chat");
-    setActiveKeyword(q.keyword);
-    setFocus(q.focus);
-    setIntentLabel(q.label);
-    setDraft(q.keyword);
+    // 输入框里有用户自己敲的内容时，不静默覆盖，挂起等确认
+    const current = draft.trim();
+    if (current && current !== q.keyword) {
+      setTab("chat");
+      setPendingSwap({ keyword: q.keyword, label: q.label, focus: q.focus });
+      return;
+    }
+    applyQuickStart({ keyword: q.keyword, label: q.label, focus: q.focus });
   }
 
   function handleOpenSession(s: Session) {
@@ -91,6 +116,8 @@ export default function AgentShell() {
     setActiveKeyword(s.query);
     setFocus("all");
     setIntentLabel("历史会话");
+    setPendingSwap(null);
+    setFilledFrom("");
     runSeq.current += 1;
     setRunRequest({ q: s.query, n: runSeq.current });
   }
@@ -101,6 +128,8 @@ export default function AgentShell() {
     setIntentLabel("");
     setFocus("all");
     setActiveKeyword("");
+    setPendingSwap(null);
+    setFilledFrom("");
     setTab("chat");
   }
 
@@ -131,17 +160,18 @@ export default function AgentShell() {
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
-                className={`rounded-md px-3 py-1.5 text-[13px] transition-colors ${
+                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] transition-colors ${
                   tab === t.id ? "bg-brand/10 font-medium text-brand" : "text-muted hover:bg-appbg hover:text-ink"
                 }`}
               >
+                <Icon name={t.icon} />
                 {t.label}
               </button>
             ))}
           </nav>
 
           <div className="flex items-center gap-2">
-            <span className="hidden items-center gap-1.5 rounded-md border border-line bg-appbg px-2 py-1 text-[11px] text-muted sm:inline-flex">
+            <span className="hidden items-center gap-1.5 rounded-full border border-line bg-appbg px-2.5 py-1 text-[11px] text-muted sm:inline-flex">
               <span
                 className={`h-1.5 w-1.5 rounded-full ${
                   connected === null ? "bg-muted" : connected ? "bg-emerald-500" : "bg-accent"
@@ -149,7 +179,7 @@ export default function AgentShell() {
               />
               {connected === null ? "检测中" : connected ? "已连接" : "后端未响应"}
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-line bg-appbg px-2 py-1 text-[11px] text-muted">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-appbg px-2.5 py-1 text-[11px] text-muted">
               {mockMode === true ? "示例模式" : "qwen · DashScope"}
             </span>
           </div>
@@ -165,6 +195,12 @@ export default function AgentShell() {
               runRequest={runRequest}
               resetToken={resetToken}
               mockMode={mockMode}
+              filledFrom={filledFrom}
+              pendingSwap={
+                pendingSwap ? { keyword: pendingSwap.keyword, label: pendingSwap.label } : null
+              }
+              onAcceptSwap={() => pendingSwap && applyQuickStart(pendingSwap)}
+              onDismissSwap={() => setPendingSwap(null)}
               onResult={handleResult}
               onOpenReport={openReport}
               onPick={handleQuickStart}

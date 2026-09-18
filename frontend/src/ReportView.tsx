@@ -12,6 +12,7 @@ import type { EChartsOption } from "echarts";
 import EChart from "./EChart";
 import WordCloud from "./WordCloud";
 import { analyze, AnalyzeResp, TopItem } from "./api";
+import { Icon } from "./agent/Sidebar";
 
 const BRAND = "#2196F3";
 const BASE = "http://localhost:8000";
@@ -131,7 +132,7 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
   function exportCsv() {
     if (!data) return;
     const rows = data.stats.top100;
-    const header = ["排名", "PMID", "标题", "期刊", "年份", "影响因子", "JCR分区", "窗口", "链接"];
+    const header = ["排名", "PMID", "标题", "期刊", "年份", "篇均被引(2年)", "分区", "窗口", "链接"];
     const lines = rows.map((r: TopItem, i) =>
       [i + 1, r.pmid, `"${(r.title || "").replace(/"/g, '""')}"`, r.journal, r.year ?? "", r.impact_factor ?? "", r.quartile ?? "", r.in_recent_5y === false ? "补足" : "近5年", r.url].join(",")
     );
@@ -150,7 +151,7 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
       {!data && !loading && (
         <div className="min-h-[58vh] flex flex-col justify-center">
           <div className="text-center mb-8">
-            <h1 className="text-2xl md:text-3xl font-semibold leading-snug">
+            <h1 className="text-[26px] md:text-3xl font-semibold leading-snug tracking-tight">
               输入关键词，一键完成 PubMed 文献调研
             </h1>
             <p className="text-sm text-muted mt-3">
@@ -161,7 +162,7 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
           <div className="max-w-3xl mx-auto">
             <div className="flex gap-2">
               <input
-                className="flex-1 rounded-lg border border-line bg-white px-4 py-3.5 text-sm outline-none focus:border-brand shadow-sm"
+                className="flex-1 rounded-lg border border-line bg-white px-4 py-3.5 text-sm outline-none transition-all focus:border-brand focus:ring-2 focus:ring-brand/15 shadow-card"
                 placeholder="输入关键词，如 CRISPR cancer / Alzheimer / COVID-19 vaccine"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -170,7 +171,7 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
                 }}
               />
               <button
-                className="rounded-lg bg-brand hover:bg-brand-hover text-white px-7 py-3.5 text-sm font-medium disabled:opacity-50"
+                className="rounded-lg bg-brand hover:bg-brand-hover text-white px-7 py-3.5 text-sm font-medium shadow-card transition-all hover:shadow-lift disabled:opacity-50 disabled:shadow-none"
                 onClick={onSearch}
                 disabled={loading}
               >
@@ -193,10 +194,10 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
           </div>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 max-w-4xl mx-auto mt-12">
-            <Feature title="F1 统计概览" desc="文献总量、年份分布、期刊分区、影响因子均值/中位/极值" />
-            <Feature title="F2 可视化" desc="关键词词云 + MeSH 研究方向标签，纯统计聚类、结果可复现" />
-            <Feature title="F3 影响力排序" desc="近 5 年影响因子 Top 100 表格，支持一键导出 CSV" />
-            <Feature title="F4 中文综述" desc="基于 Top 摘要生成中文分点综述，每条论断标注 PMID 出处" />
+            <Feature icon="stats" title="F1 统计概览" desc="文献总量、年份分布、期刊分区、篇均被引均值/中位/极值" />
+            <Feature icon="cloud" title="F2 可视化" desc="关键词词云 + MeSH 研究方向标签，纯统计聚类、结果可复现" />
+            <Feature icon="top100" title="F3 影响力排序" desc="近 5 年篇均被引 Top 100 表格，支持一键导出 CSV" />
+            <Feature icon="review" title="F4 中文综述" desc="基于 Top 摘要生成中文分点综述，每条论断标注 PMID 出处" />
           </div>
 
           {error && (
@@ -211,7 +212,7 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
         <div className="space-y-4">
           <div className="flex gap-2">
             <input
-              className="flex-1 rounded-md border border-line bg-white px-4 py-3 text-sm outline-none focus:border-brand"
+              className="flex-1 rounded-md border border-line bg-white px-4 py-3 text-sm outline-none transition-all focus:border-brand focus:ring-2 focus:ring-brand/15"
               placeholder="输入关键词，如 CRISPR cancer / Alzheimer / COVID-19 vaccine"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -220,7 +221,7 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
               }}
             />
             <button
-              className="rounded-md bg-brand hover:bg-brand-hover text-white px-6 py-3 text-sm font-medium disabled:opacity-50"
+              className="rounded-md bg-brand hover:bg-brand-hover text-white px-6 py-3 text-sm font-medium shadow-card transition-all hover:shadow-lift disabled:opacity-50 disabled:shadow-none"
               onClick={onSearch}
               disabled={loading}
             >
@@ -245,6 +246,28 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
           {error && (
             <div className="rounded-md border border-red-200 bg-red-50 text-red-600 text-sm px-4 py-3">
               {error}
+            </div>
+          )}
+
+          {data && !loading && data.total === 0 && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              「{data.query}」在 PubMed（英文语料库）中未命中文献。
+              {data.suggestions && data.suggestions.length > 0 && (
+                <>
+                  {" "}试试这些英文检索词：
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {data.suggestions.map((sg) => (
+                      <button
+                        key={sg}
+                        className="rounded-full border border-amber-300 bg-white px-3 py-1 text-xs text-amber-900 hover:border-amber-500"
+                        onClick={() => runAnalyze(sg)}
+                      >
+                        {sg}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -275,12 +298,18 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
                   value={`${ifs?.known_count ?? 0} 篇`}
                   sub={`覆盖率 ${data.returned ? Math.round(((ifs?.known_count ?? 0) / data.returned) * 100) : 0}% · 其余未收录`}
                 />
-                <Card label="平均影响因子" value={ifs?.mean != null ? String(ifs.mean) : "—"} sub={ifs?.median != null ? `中位数 ${ifs.median}` : undefined} />
-                <Card label="最高 IF 文献" value={topJournal?.impact_factor != null ? String(topJournal.impact_factor) : "—"} sub={topJournal?.journal} />
+                <Card label="平均篇均被引" value={ifs?.mean != null ? String(ifs.mean) : "—"} sub={ifs?.median != null ? `中位数 ${ifs.median}` : undefined} />
+                <Card label="最高篇均被引文献" value={topJournal?.impact_factor != null ? String(topJournal.impact_factor) : "—"} sub={topJournal?.journal} />
+              </div>
+              <div className="text-xs text-muted leading-6">
+                口径说明：指标为期刊「近 2 年篇均被引」（SCImago Citations/Doc(2y) 优先），分区为 SCImago 官方发布（OpenAlex 兜底条目为推算），均非 JCR 影响因子。
               </div>
 
-              <section className="rounded-lg border border-line bg-white p-5">
-                <h2 className="font-semibold mb-3">中文综述</h2>
+              <section className="rounded-lg border border-line bg-white p-5 shadow-card">
+                <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold">
+                  <span className="h-3.5 w-1 rounded-full bg-brand" aria-hidden="true" />
+                  中文综述
+                </h2>
                 {data.review.mock && (
                   <div className="mb-2 text-xs text-accent">
                     （示例综述：由本次检索的真实统计结果自动生成，未调用大模型；配置 DASHSCOPE_API_KEY 后生成基于摘要原文的 LLM 综述）
@@ -304,7 +333,7 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
                 <Panel title="年份分布">
                   <EChart option={yearOption} height={280} />
                 </Panel>
-                <Panel title="期刊分区分布（IF 阈值近似）">
+                <Panel title="期刊分区分布（SCImago 官方分区 / OpenAlex 推算兜底）">
                   <EChart option={quartileOption} height={280} />
                 </Panel>
               </div>
@@ -328,10 +357,13 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
                 </Panel>
               </div>
 
-              <section className="rounded-lg border border-line bg-white p-5">
+              <section className="rounded-lg border border-line bg-white p-5 shadow-card">
                 <div className="flex items-center justify-between mb-3">
-                  <h2 className="font-semibold">影响因子 Top {data.stats.top100.length}（近 5 年优先）</h2>
-                  <button className="text-xs rounded-md border border-line px-3 py-1.5 text-muted hover:text-brand hover:border-brand" onClick={exportCsv}>
+                  <h2 className="flex items-center gap-2 text-[15px] font-semibold">
+                    <span className="h-3.5 w-1 rounded-full bg-brand" aria-hidden="true" />
+                    篇均被引 Top {data.stats.top100.length}（近 5 年优先）
+                  </h2>
+                  <button className="text-xs rounded-md border border-line px-3 py-1.5 text-muted transition-colors hover:text-brand hover:border-brand" onClick={exportCsv}>
                     导出 CSV
                   </button>
                 </div>
@@ -345,31 +377,31 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
                 <div className="overflow-auto max-h-[420px] border border-line rounded-md">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-appbg text-muted">
-                      <tr className="text-left">
+                      <tr className="text-left text-xs tracking-wide">
                         <th className="px-3 py-2 font-medium">#</th>
                         <th className="px-3 py-2 font-medium">标题</th>
                         <th className="px-3 py-2 font-medium">期刊</th>
                         <th className="px-3 py-2 font-medium">年份</th>
-                        <th className="px-3 py-2 font-medium">IF</th>
+                        <th className="px-3 py-2 font-medium">篇均被引</th>
                         <th className="px-3 py-2 font-medium">分区</th>
                       </tr>
                     </thead>
                     <tbody>
                       {data.stats.top100.map((r, i) => (
                         <tr key={r.pmid} className="border-t border-line hover:bg-brand/5">
-                          <td className="px-3 py-2 text-muted">{i + 1}</td>
+                          <td className="px-3 py-2 text-muted tabular-nums">{i + 1}</td>
                           <td className="px-3 py-2">
                             <a className="hover:text-brand" href={r.url} target="_blank" rel="noreferrer">{r.title || "—"}</a>
                           </td>
                           <td className="px-3 py-2 text-muted">{r.journal || "—"}</td>
-                          <td className="px-3 py-2 text-muted">
+                          <td className="px-3 py-2 text-muted tabular-nums">
                             {r.year ?? "—"}
                             {r.in_recent_5y === false && <span className="ml-1 text-[10px] text-accent">补</span>}
                           </td>
-                          <td className="px-3 py-2">{r.impact_factor != null ? r.impact_factor : "—"}</td>
+                          <td className="px-3 py-2 tabular-nums">{r.impact_factor != null ? r.impact_factor : "—"}</td>
                           <td className="px-3 py-2">
                             {r.quartile ? (
-                              <span className={`px-2 py-0.5 rounded text-xs ${r.quartile === "Q1" ? "bg-green-100 text-green-700" : r.quartile === "Q2" ? "bg-blue-100 text-blue-700" : r.quartile === "Q3" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{r.quartile}</span>
+                              <span className={`px-2 py-0.5 rounded text-xs font-medium ${r.quartile === "Q1" ? "bg-green-100 text-green-700" : r.quartile === "Q2" ? "bg-blue-100 text-blue-700" : r.quartile === "Q3" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>{r.quartile}</span>
                             ) : (
                               <span className="text-muted">—</span>
                             )}
@@ -382,12 +414,15 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
               </section>
 
               <section>
-                <h2 className="font-semibold mb-3">相关文献（本次分析 {data.articles.length} 篇）</h2>
+                <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold">
+                  <span className="h-3.5 w-1 rounded-full bg-brand" aria-hidden="true" />
+                  相关文献（本次分析 {data.articles.length} 篇）
+                </h2>
                 <div className="space-y-3">
                   {data.articles.map((a) => (
-                    <a key={a.pmid} href={a.url} target="_blank" rel="noreferrer" className="block rounded-md border border-line bg-white p-4 hover:border-brand transition">
+                    <a key={a.pmid} href={a.url} target="_blank" rel="noreferrer" className="block rounded-md border border-line bg-white p-4 shadow-card transition-all hover:border-brand hover:shadow-lift">
                       <div className="text-sm font-medium leading-6">{a.title}</div>
-                      <div className="text-xs text-muted mt-1">
+                      <div className="text-xs text-muted mt-1 tabular-nums">
                         {a.journal}
                         {a.year ? ` · ${a.year}` : ""} · PMID:{a.pmid}
                         {a.impact_factor != null ? ` · IF ${a.impact_factor}` : ""}
@@ -406,27 +441,35 @@ export default function ReportView({ injectQuery, onQueryInjected }: Props) {
 
 function Card({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-lg border border-line bg-white p-4">
-      <div className="text-xs text-muted">{label}</div>
-      <div className="text-xl font-semibold mt-1">{value}</div>
+    <div className="rounded-lg border border-line bg-white p-4 shadow-card">
+      <div className="text-xs tracking-wide text-muted">{label}</div>
+      <div className="text-xl font-semibold mt-1 tabular-nums">{value}</div>
       {sub && <div className="text-xs text-muted mt-1 truncate">{sub}</div>}
     </div>
   );
 }
 
-function Feature({ title, desc }: { title: string; desc: string }) {
+function Feature({ icon, title, desc }: { icon: string; title: string; desc: string }) {
   return (
-    <div className="rounded-lg border border-line bg-white p-4">
-      <div className="text-sm font-medium text-brand">{title}</div>
-      <div className="text-xs text-muted mt-1.5 leading-6">{desc}</div>
+    <div className="rounded-lg border border-line bg-white p-4 shadow-card transition-all hover:-translate-y-px hover:shadow-lift">
+      <div className="flex items-center gap-2">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-brand/10 text-brand">
+          <Icon name={icon} />
+        </span>
+        <span className="text-sm font-medium">{title}</span>
+      </div>
+      <div className="text-xs text-muted mt-2 leading-6">{desc}</div>
     </div>
   );
 }
 
 function Panel({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-line bg-white p-5">
-      <h2 className="font-semibold mb-2">{title}</h2>
+    <section className="rounded-lg border border-line bg-white p-5 shadow-card">
+      <h2 className="mb-3 flex items-center gap-2 text-[15px] font-semibold">
+        <span className="h-3.5 w-1 rounded-full bg-brand" aria-hidden="true" />
+        {title}
+      </h2>
       {children}
     </section>
   );

@@ -13,8 +13,16 @@ body,
 }
 
 body {
-  @apply bg-appbg text-ink;
-  font-family: Inter, "Noto Sans SC", system-ui, sans-serif;
+  @apply bg-appbg text-ink antialiased;
+  /* 中文优先的字体栈：优先用系统里更现代的中文字体，Windows 落到 YaHei UI */
+  font-family: Inter, "HarmonyOS Sans SC", "MiSans", "Noto Sans SC",
+    "Microsoft YaHei UI", system-ui, sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+/* 选中文本用品牌色淡染，细节统一 */
+::selection {
+  background: rgb(33 150 243 / 0.16);
 }
 
 /* 细滚动条：三栏布局下默认滚动条过重，会压掉内容区的呼吸感 */

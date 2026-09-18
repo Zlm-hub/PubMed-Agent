@@ -15,14 +15,17 @@ import {
   fillToolResults,
   ChatMessage,
   DEFAULT_MAX_RESULTS,
+  DEFAULT_TOP_N,
   Focus,
   MIN_REPLAY_MS,
+  parseIntent,
   QUICK_STARTS,
   sleep,
   uid,
   type QuickStart,
 } from "./model";
 import ToolCard from "./ToolCard";
+import { Icon } from "./Sidebar";
 
 interface Props {
   draft: string;
@@ -36,6 +39,12 @@ interface Props {
   /** 递增即清空当前对话 */
   resetToken: number;
   mockMode: boolean | null;
+  /** 最近一次由「快捷开始」填入的预设词；非空时在输入区给出明确提示 */
+  filledFrom: string;
+  /** 输入框已有内容时被挂起的快捷开始项，等用户确认是否替换 */
+  pendingSwap: { keyword: string; label: string } | null;
+  onAcceptSwap: () => void;
+  onDismissSwap: () => void;
   onResult: (r: AnalyzeResp) => void;
   onOpenReport: (query: string) => void;
   /** 欢迎页能力卡点击，与左侧「快捷开始」走同一条路径 */
@@ -52,6 +61,10 @@ export default function ChatPanel({
   runRequest,
   resetToken,
   mockMode,
+  filledFrom,
+  pendingSwap,
+  onAcceptSwap,
+  onDismissSwap,
   onResult,
   onOpenReport,
   onPick,
@@ -108,18 +121,24 @@ export default function ChatPanel({
   }
 
   async function runAgent(raw: string) {
-    const query = raw.trim();
+    // 自然语言输入在这里拆成「检索词 + 展示条数」：
+    // 「我要看一下医学类的前Top10」→ term=医学类, topN=10。
+    // 之前整句话被原样发给 PubMed，命中结果与主题无关；且条数要求无人消费，卡片固定只出 5 条。
+    const intent = parseIntent(raw);
+    const query = intent.term;
     if (!query || busyRef.current) return;
     setDraft("");
 
-    const userMsg: ChatMessage = { id: uid(), role: "user", text: query, ts: Date.now() };
+    // 气泡里显示用户原话；实际检索词显示在工具卡入参中（不一致时额外标 raw_input）
+    const userMsg: ChatMessage = { id: uid(), role: "user", text: intent.raw, ts: Date.now() };
     const assistantId = uid();
-    const tools = buildTools(query, DEFAULT_MAX_RESULTS);
+    const tools = buildTools(query, DEFAULT_MAX_RESULTS, intent.rewritten ? intent.raw : undefined);
     const assistantMsg: ChatMessage = {
       id: assistantId,
       role: "assistant",
       thinking: buildThinking(query, DEFAULT_MAX_RESULTS),
       tools,
+      topN: intent.topN,
       ts: Date.now(),
     };
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
@@ -190,6 +209,7 @@ export default function ChatPanel({
                   active={busy && m.id === messages[messages.length - 1]?.id}
                   focus={focus}
                   onOpenReport={onOpenReport}
+                  onRetry={(q) => void runAgent(q)}
                 />
               ),
             )}
@@ -200,19 +220,39 @@ export default function ChatPanel({
       <div className="border-t border-line bg-white px-6 py-3">
         <div className="mx-auto w-full max-w-3xl">
           <div className="flex items-center gap-2 pb-2">
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-line bg-appbg px-2 py-1 text-[11px] text-muted">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-appbg px-2.5 py-1 text-[11px] text-muted">
               <span className="h-1.5 w-1.5 rounded-full bg-brand" />
               技能 · 全流程分析
             </span>
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-line bg-appbg px-2 py-1 text-[11px] text-muted">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-appbg px-2.5 py-1 text-[11px] text-muted">
               {mockMode === true ? "示例模式（未配置密钥）" : "qwen · DashScope"}
             </span>
             {intentLabel && (
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-brand/30 bg-brand/10 px-2 py-1 text-[11px] text-brand">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-brand/30 bg-brand/10 px-2.5 py-1 text-[11px] text-brand">
                 意图 · {intentLabel}
               </span>
             )}
           </div>
+
+          {pendingSwap && draft.trim() && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-brand/30 bg-brand/5 px-3 py-2 text-[11px]">
+              <span className="text-ink">输入框里已有你的内容，我没有替换。</span>
+              <button
+                type="button"
+                onClick={onAcceptSwap}
+                className="rounded border border-brand px-2 py-0.5 text-brand transition-colors hover:bg-brand/10"
+              >
+                替换为「{pendingSwap.label} · {pendingSwap.keyword}」
+              </button>
+              <button
+                type="button"
+                onClick={onDismissSwap}
+                className="rounded px-2 py-0.5 text-muted transition-colors hover:bg-appbg"
+              >
+                保留我的
+              </button>
+            </div>
+          )}
 
           <div className="flex items-end gap-2">
             <textarea
@@ -227,19 +267,28 @@ export default function ChatPanel({
                 }
               }}
               placeholder="向 PubMed Agent 提问，或点左侧快捷开始预填关键词，回车发送…"
-              className="max-h-40 min-h-[42px] flex-1 resize-none rounded-lg border border-line bg-white px-4 py-3 text-sm leading-6 outline-none transition-colors focus:border-brand"
+              className="max-h-40 min-h-[42px] flex-1 resize-none rounded-lg border border-line bg-white px-4 py-3 text-sm leading-6 outline-none transition-all focus:border-brand focus:ring-2 focus:ring-brand/15"
             />
             <button
               type="button"
               onClick={() => void runAgent(draft)}
               disabled={busy || !draft.trim()}
-              className="rounded-lg bg-brand px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-brand-hover disabled:opacity-40"
+              className="rounded-lg bg-brand px-5 py-3 text-sm font-medium text-white shadow-card transition-all hover:bg-brand-hover hover:shadow-lift disabled:opacity-40 disabled:shadow-none"
             >
               {busy ? "分析中…" : "发送"}
             </button>
           </div>
-          <div className="pt-1.5 text-[11px] text-muted">
-            Enter 发送 · Shift+Enter 换行 · 检索与统计走 NCBI E-utilities 与本地期刊指标库，结果可溯源到 PMID
+          <div className="pt-1.5 text-[11px] leading-5 text-muted">
+            {filledFrom ? (
+              <span className="text-brand">
+                已填入预设词「{filledFrom}」· 按 Enter 或点「发送」开始分析
+              </span>
+            ) : (
+              <>
+                Enter 发送 · Shift+Enter 换行 · 检索与统计走 NCBI E-utilities
+                与本地期刊指标库，结果可溯源到 PMID
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -254,12 +303,13 @@ function Welcome({ onPick }: { onPick: (q: QuickStart) => void }) {
   return (
     <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center px-6 py-10">
       <div className="text-center">
-        <div className="mx-auto grid h-14 w-14 place-items-center rounded-lg bg-brand">
-          <svg viewBox="0 0 16 16" width="26" height="26" fill="none" stroke="#fff" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 2h5l3 3v9H4V2Zm5 0v3h3M6 9h4M6 11.5h4" />
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-xl bg-brand shadow-lift">
+          <svg viewBox="0 0 16 16" width="28" height="28" fill="none" stroke="#fff" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4.5 2.5h4.8l3.2 3.2v7.8h-8V2.5Zm4.8 0v3.2h3.2" />
+            <path d="M5.8 9.4h1.3l.9-1.7 1.4 2.8.9-1.1h1.5" />
           </svg>
         </div>
-        <h2 className="mt-4 text-xl font-semibold leading-7">你好，我是 PubMed Agent</h2>
+        <h2 className="mt-4 text-[22px] font-semibold leading-8 tracking-tight">你好，我是 PubMed Agent</h2>
         <p className="mt-2 text-sm leading-6 text-muted">
           输入一个关键词，我会跑完「检索 → 指标 → 统计 → 可视化 → 中文综述」整条链路
         </p>
@@ -271,16 +321,17 @@ function Welcome({ onPick }: { onPick: (q: QuickStart) => void }) {
             key={c.id}
             type="button"
             onClick={() => onPick(c)}
-            className="rounded-lg border border-line bg-white p-3.5 text-left transition-colors hover:border-brand"
+            className="rounded-lg border border-line bg-white p-4 text-left shadow-card transition-all hover:-translate-y-px hover:border-brand hover:shadow-lift"
           >
-            <div className="text-[13px] font-medium text-brand">{c.label}</div>
-            <div className="mt-1 text-[11px] leading-5 text-muted">{c.desc}</div>
+            <div className="flex items-center gap-2">
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-brand/10 text-brand">
+                <Icon name={c.id} />
+              </span>
+              <span className="text-[13px] font-medium text-ink">{c.label}</span>
+            </div>
+            <div className="mt-2 text-[11px] leading-5 text-muted">{c.desc}</div>
           </button>
         ))}
-      </div>
-
-      <div className="mt-6 text-center text-[11px] leading-5 text-muted">
-        一键演示关键词 · {QUICK_STARTS.filter((q) => q.keyword).map((q) => q.keyword).join(" · ")}
       </div>
     </div>
   );
@@ -291,11 +342,13 @@ function AssistantBubble({
   active,
   focus,
   onOpenReport,
+  onRetry,
 }: {
   msg: ChatMessage;
   active: boolean;
   focus: Focus;
   onOpenReport: (q: string) => void;
+  onRetry: (q: string) => void;
 }) {
   const [manual, setManual] = useState<boolean | null>(null);
   const open = manual ?? active;
@@ -340,11 +393,19 @@ function AssistantBubble({
         {msg.error && (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
             执行失败：{msg.error}
+            {msg.request_id && <span className="ml-1 font-mono text-red-500/70">（rid {msg.request_id}）</span>}
           </div>
         )}
 
         {msg.result && (
-          <ResultBlock result={msg.result} focus={focus} elapsedMs={msg.elapsedMs} onOpenReport={onOpenReport} />
+          <ResultBlock
+            result={msg.result}
+            focus={focus}
+            elapsedMs={msg.elapsedMs}
+            topN={msg.topN}
+            onOpenReport={onOpenReport}
+            onRetry={onRetry}
+          />
         )}
       </div>
     </div>
@@ -355,24 +416,36 @@ function ResultBlock({
   result,
   focus,
   elapsedMs,
+  topN = DEFAULT_TOP_N,
   onOpenReport,
+  onRetry,
 }: {
   result: AnalyzeResp;
   focus: Focus;
   elapsedMs?: number;
+  /** 内联榜单展示条数，来自本次输入的解析结果 */
+  topN?: number;
   onOpenReport: (q: string) => void;
+  /** 0 命中引导：点击候选词重新发起检索 */
+  onRetry: (q: string) => void;
 }) {
   const [expandReview, setExpandReview] = useState(false);
   const ifs = result.stats.if_statistics;
   const coverage = result.returned > 0 ? Math.round((ifs.known_count / result.returned) * 100) : 0;
   const topJournal = (result.stats.top100 ?? []).find((x) => x.impact_factor) ?? null;
+  // 要多少给多少：超出数据量时按实际条数收敛，并在标题里说明原因
+  const topList = result.stats.top100 ?? [];
+  const shownTopN = Math.min(topN, topList.length);
+  const topNShort = topN > topList.length;
+  const rewrite = result.rewrite;
+  const rewritten = !!rewrite && rewrite.source !== "passthrough" && rewrite.term !== result.query;
 
   const statsBlock = (
     <div key="stats" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       <Mini label="命中总量" value={result.total.toLocaleString()} />
-      <Mini label="IF 覆盖" value={`${coverage}%`} sub={`${ifs.known_count} / ${result.returned} 篇`} />
-      <Mini label="平均 IF" value={ifs.mean != null ? String(ifs.mean) : "—"} sub={ifs.median != null ? `中位 ${ifs.median}` : undefined} />
-      <Mini label="最高 IF" value={topJournal?.impact_factor != null ? String(topJournal.impact_factor) : "—"} sub={topJournal?.journal} />
+      <Mini label="指标覆盖" value={`${coverage}%`} sub={`${ifs.known_count} / ${result.returned} 篇`} />
+      <Mini label="篇均被引均值" value={ifs.mean != null ? String(ifs.mean) : "—"} sub={ifs.median != null ? `中位 ${ifs.median}` : undefined} />
+      <Mini label="最高篇均被引" value={topJournal?.impact_factor != null ? String(topJournal.impact_factor) : "—"} sub={topJournal?.journal} />
     </div>
   );
 
@@ -393,20 +466,23 @@ function ResultBlock({
   const topBlock = (
     <div key="top100" className="rounded-md border border-line bg-white">
       <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-[11px] font-medium text-muted">影响力 Top 5（共 {result.stats.top100.length} 条）</span>
+        <span className="text-[11px] font-medium text-muted">
+          影响力 Top {shownTopN}（共 {topList.length} 条）
+          {topNShort && <span className="ml-1 text-muted">· 你想看 {topN} 条，本次数据只够 {topList.length} 条</span>}
+        </span>
         <button type="button" onClick={() => onOpenReport(result.query)} className="text-[11px] text-brand hover:underline">
           查看完整报告
         </button>
       </div>
       <div className="border-t border-line">
-        {(result.stats.top100 ?? []).slice(0, 5).map((r, i) => (
+        {topList.slice(0, shownTopN).map((r, i) => (
           <div key={r.pmid} className="flex items-start gap-2 border-b border-line px-3 py-2 last:border-b-0">
-            <span className="w-4 shrink-0 text-[11px] text-muted">{i + 1}</span>
+            <span className="w-4 shrink-0 text-[11px] tabular-nums text-muted">{i + 1}</span>
             <a href={r.url} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate text-[12px] leading-5 hover:text-brand">
               {r.title}
             </a>
-            <span className="shrink-0 text-[11px] text-muted">{r.journal}</span>
-            <span className="w-14 shrink-0 text-right text-[11px] font-medium">{r.impact_factor ?? "—"}</span>
+            <span className="hidden shrink-0 text-[11px] text-muted sm:block">{r.journal}</span>
+            <span className="w-14 shrink-0 text-right text-[11px] font-medium tabular-nums">{r.impact_factor ?? "—"}</span>
           </div>
         ))}
       </div>
@@ -418,7 +494,7 @@ function ResultBlock({
     <div key="review" className="rounded-md border border-line bg-white p-3">
       <div className="flex items-center gap-2">
         <span className="text-[11px] font-medium text-muted">中文综述</span>
-        {result.review?.mock && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">统计兜底</span>}
+        {result.review?.mock && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">统计兜底</span>}
         <span className="text-[10px] text-muted">· {text.length} 字 · {result.review?.sources.length ?? 0} 处 PMID 出处</span>
       </div>
       <div className="mt-1.5 whitespace-pre-wrap text-[12px] leading-6 text-ink">
@@ -438,13 +514,17 @@ function ResultBlock({
   );
 
   const order: Record<Focus, string[]> = {
+    // 全流程：四块齐全
     all: ["stats", "cloud", "top100", "review"],
-    stats: ["stats", "cloud", "top100", "review"],
+    // 统计概览：只给统计类可视化（榜单与综述各有专门入口，不在这里重复占位）
+    stats: ["stats", "cloud"],
     cloud: ["cloud", "stats", "top100", "review"],
     top100: ["top100", "stats", "cloud", "review"],
     review: ["review", "stats", "cloud", "top100"],
   };
   const blocks: Record<string, JSX.Element> = { stats: statsBlock, cloud: cloudBlock, top100: topBlock, review: reviewBlock };
+  /** 聚焦后主动收起了部分结果时，如实说明去向，避免被当成「数据没出来」 */
+  const trimmed = focus === "stats";
 
   return (
     <div className="space-y-2">
@@ -452,18 +532,67 @@ function ResultBlock({
         <span>
           检索 “<span className="text-ink">{result.query}</span>” · 命中 <span className="text-ink">{result.total.toLocaleString()}</span> 篇 · 本次分析 {result.returned} 篇
         </span>
-        {elapsedMs != null && <span>· 链路耗时 {elapsedMs} ms</span>}
+        {rewritten && (
+          <span>
+            · 实际检索 “<span className="text-ink">{rewrite!.term}</span>”
+            （{rewrite!.source === "mapping" ? "本地术语映射" : "大模型改写"}）
+          </span>
+        )}
+        {elapsedMs != null && (
+          <span>· {result.cached ? "命中预缓存" : "链路耗时"} {elapsedMs} ms</span>
+        )}
+        {result.request_id && (
+          <span className="font-mono text-muted/60">· rid {result.request_id}</span>
+        )}
       </div>
+
+      {result.total === 0 && !(result.suggestions?.length ?? 0) && (
+        <div className="rounded-md border border-line bg-appbg px-3 py-2 text-[11px] text-muted">
+          未命中文献。可换英文关键词重试；排查时向维护者提供 rid {result.request_id || "—"}。
+        </div>
+      )}
+
+      {result.total === 0 && (result.suggestions?.length ?? 0) > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5">
+          <div className="text-xs text-amber-800">
+            中文词在 PubMed（英文语料库）里匹配不到文献。试试这些英文检索词：
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {result.suggestions!.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => onRetry(s)}
+                className="rounded-full border border-amber-300 bg-white px-3 py-1 text-[12px] text-amber-900 transition-colors hover:border-amber-500 hover:bg-amber-100"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {order[focus].map((k) => blocks[k])}
+      {trimmed && (
+        <div className="text-[11px] leading-5 text-muted">
+          「统计概览」只展示统计类结果 · 完整榜单与中文综述见{" "}
+          <button
+            type="button"
+            onClick={() => onOpenReport(result.query)}
+            className="text-brand hover:underline"
+          >
+            报告页
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 function Mini({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-md border border-line bg-white px-3 py-2">
-      <div className="text-[11px] text-muted">{label}</div>
-      <div className="mt-0.5 text-base font-semibold leading-6">{value}</div>
+    <div className="rounded-md border border-line bg-white px-3 py-2 shadow-card">
+      <div className="text-[11px] tracking-wide text-muted">{label}</div>
+      <div className="mt-0.5 text-[17px] font-semibold leading-6 tabular-nums">{value}</div>
       {sub && <div className="truncate text-[10px] text-muted">{sub}</div>}
     </div>
   );
