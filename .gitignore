@@ -24,6 +24,20 @@ backend/data/*.bak*
 # 期刊指标 SQLite（可由 scripts/build_metrics_db.py 重新生成；是否随包发布由提交者决定，
 # 默认不入库以控制仓库体积，需要「随包发布」时再显式 git add -f）
 backend/data/*.db
+# 运行期数据库的 WAL / SHM 伴生文件（SQLite 打开时自动生成，绝不属于源码）
+backend/data/*.db-wal
+backend/data/*.db-shm
+# 登录 token 的 HMAC 签名密钥：AUTH_SECRET 未配置时自动生成落盘。
+# **这是密钥，任何情况下都不许进仓库**（泄漏即可伪造任意用户的登录态）。
+backend/data/auth_secret.key
+
+# ---- 部署包里的运行期数据（deploy/ 目录只提交配置与脚本）----
+# 服务器上的 data/cache/logs/certs 是容器挂载卷内容（含客户会话、账号库、证书），
+# 属于运行期数据；本机同步到仓库只应带 Dockerfile / compose / 脚本 / 文档。
+deploy/data/
+deploy/cache/
+deploy/logs/
+deploy/certs/
 
 # ---- Python ----
 __pycache__/
@@ -36,9 +50,10 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# ---- 本地调试产物 ----
+# ---- 本地调试产物（约定：下划线开头，不进仓库、可随时删）----
 _*.png
 _dom*.html
+_*.py
 
 # ---- 本地流水线产物 / Office 临时锁文件 ----
 output/

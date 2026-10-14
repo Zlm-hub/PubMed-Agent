@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1
+#
+# 变体镜像：**前端已在本地构建好**（frontend/dist 已存在），服务器上只装 Python 依赖。
+# 用途：服务器内存小（2G）时最稳的一条路——完全跳过 npm ci + 前端构建（实测峰值 852MB）。
+#
+# 用法：
+#   ① 本机（不需要 Docker）：cd frontend && npm run build
+#   ② 把仓库同步到服务器（务必包含 backend/data/*.db 与 frontend/dist）：
+#        rsync -av --exclude node_modules --exclude .venv ./ root@<IP>:/opt/pubmed-analytics/
+#   ③ 服务器：
+#        cd /opt/pubmed-analytics
+#        docker build -f deploy/Dockerfile.prebuilt -t pubmed-analytics:latest .
+#        cd deploy && docker compose up -d --no-build
+#
+# 与 deploy/Dockerfile 的差别：去掉了 node 构建阶段，直接 COPY 本地构建好的 frontend/dist。
+# 注意：这样镜像里的前端就是**本地构建时的版本**，前端改了要重新构建再传。
+
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+COPY backend/requirements.txt ./
+# 国内服务器直连 PyPI 常慢/抖动（实测依赖解析 221 秒后报 "No matching distribution"，
+# 但同包单独下载是成功的 —— 属于网络抖动而非缺包）。默认走阿里云镜像并加重试。
+# 海外机器可覆盖：--build-arg PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+RUN pip install --no-cache-dir --retries 5 --timeout 60 \
+        --index-url "${PIP_INDEX_URL}" -r requirements.txt
+
+COPY backend/ ./
+COPY frontend/dist ./web_dist
+
+# 只保留「只读参考库」（期刊指标）作种子；运行时库（文献 / 会话）不打包
+RUN mkdir -p /opt/seed/data \
+ && for f in /app/data/journal_metrics.db /app/data/journal_metrics.json; do \
+        [ -e "$f" ] && cp -f "$f" /opt/seed/data/ || true; \
+    done \
+ && rm -f /app/data/literature.db /app/data/literature.db-wal /app/data/literature.db-shm \
+          /app/data/sessions.db   /app/data/sessions.db-wal   /app/data/sessions.db-shm
+
+COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENV FRONTEND_DIST=/app/web_dist \
+    HOST=0.0.0.0 \
+    PORT=8000
+
+EXPOSE 8000
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

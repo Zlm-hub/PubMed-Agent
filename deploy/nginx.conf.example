@@ -1,0 +1,46 @@
+# nginx 反向代理模板（绑域名 + HTTPS）。复制为 deploy/nginx.conf 后把域名换掉即可。
+#
+# 启用步骤见 deploy/README.md「五、绑定域名 + HTTPS」：
+#   1) cp nginx.conf.example nginx.conf  &&  改下面的 your-domain.com
+#   2) 证书放到 deploy/certs/（fullchain.pem / privkey.pem）
+#   3) docker-compose.yml 里打开 nginx 服务注释，并把 app 的 ports 改为 "127.0.0.1:8000:8000"
+#   4) deploy/.env 里 ACCESS_COOKIE_SECURE=1，然后 docker compose up -d
+
+# ---- HTTP：全部跳到 HTTPS ----
+server {
+    listen 80;
+    server_name your-domain.com;
+    return 301 https://$host$request_uri;
+}
+
+# ---- HTTPS：反代到应用容器 ----
+server {
+    listen 443 ssl;
+    http2 on;                       # nginx >= 1.25.1；更老版本改成 "listen 443 ssl http2;"
+    server_name your-domain.com;
+
+    ssl_certificate     /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+
+    client_max_body_size 4m;
+
+    location / {
+        proxy_pass http://app:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # ⚠️ 关键：流式分析走 SSE，必须关闭缓冲，
+        #    否则中文综述不会「逐字出现」，而是憋到最后一次性弹出。
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}

@@ -1,0 +1,71 @@
+# PubMed Analytics —— 生产编排（单容器单端口）
+#
+# 目录约定：服务器上只需要本目录
+#   /opt/pubmed-analytics/
+#   ├── docker-compose.yml
+#   ├── .env                  ← 部署变量 + NCBI / DashScope 密钥（见 .env.example）
+#   ├── data/ cache/ logs/    ← 运行时数据（首次启动自动创建）
+#   └── nginx.conf + certs/   ← 仅「域名 + HTTPS」时需要
+#
+# 两种用法：
+#   方式 A（推荐：本地已 build 好镜像并 docker save 传过来）
+#       docker load < pa.tar.gz
+#       docker compose up -d --no-build        # 直接用已加载的镜像，服务器零构建
+#   方式 B（在服务器上从仓库源码构建，需 2G+ 内存余量）
+#       docker compose up -d --build
+#
+# 访问：http://<服务器IP>:8000  → 账号登录（管理员见 ADMIN_*，普通账号可自助注册）
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: pubmed-analytics:latest
+    container_name: pubmed-analytics
+    restart: unless-stopped
+
+    # 配置只有一处来源：本目录的 .env（部署变量 + 密钥）。
+    # 这样服务器上无需再带仓库根的 ../.env，部署包是自包含的。
+    env_file:
+      - ./.env
+
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8000"
+      FRONTEND_DIST: /app/web_dist
+
+    ports:
+      # 只监听内网时改成 "127.0.0.1:${HOST_PORT:-8000}:8000"（前面挂 nginx 时）
+      - "${HOST_PORT:-8000}:8000"
+
+    volumes:
+      # 运行时数据持久化。容器内已内置「期刊指标库」种子，首次启动会自动写入 data/。
+      - ./data:/app/data
+      - ./cache:/app/cache
+      - ./logs:/app/logs
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # 启动要把 18MB 期刊指标库全量载入内存（34,941 本），2 核机器实测需 1~2 分钟；
+      # 这段期间视为正常，不判 unhealthy。
+      start_period: 150s
+
+  # ---------------------------------------------------------------------------
+  # 可选：绑定域名 + HTTPS 时的 nginx 反代。
+  # 启用步骤见 README「五、绑定域名 + HTTPS」；模板见 nginx.conf.example
+  # （已按 tangchaolizi.xyz 填好的那份是 nginx.conf）。
+  # 启用前把下面注释打开，并把 app 的 ports 改成 "127.0.0.1:8000:8000"。
+  # ---------------------------------------------------------------------------
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: pubmed-analytics-nginx
+  #   restart: unless-stopped
+  #   depends_on: [app]
+  #   ports: ["80:80", "443:443"]
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  #     - ./certs:/etc/nginx/certs:ro
