@@ -133,6 +133,11 @@ cd deploy && docker compose up -d --no-build
 
 ### 情形 B：服务器上**已有 nginx**（推荐复用，避免 80/443 冲突）
 
+> 本项目已经准备好一份**可直接落地**的子域名 HTTPS 配置：`deploy/nginx-pubmed.conf`
+> （80→301 + ACME 挑战目录 + 443 反代，SSE 关缓冲、透传 X-Forwarded-For 以便后端按真实 IP 限流）。
+> 落地四步：① DNS 加 A 记录 ② 放到 `/etc/nginx/conf.d/` 并 reload ③ `certbot --nginx -d <子域名>`
+> ④ 只走 https 时把 `ACCESS_COOKIE_SECURE=1` 并重建容器（若仍保留 http 直连则保持 0）。
+
 > 这台服务器就属于情形 B：`80/443` 已由宿主机 `nginx/1.24.0 (Ubuntu)` 占用。
 > 此时**不要**再起我们的 nginx 容器，而是把配置加进宿主机 nginx。
 
@@ -437,3 +442,48 @@ curl -s 'http://127.0.0.1:8000/api/health?deep=1'             # ⑤ 深检：库
   可在 `deploy/logs/app.log` 里查来源 IP 与重试秒数。
 - 深检探活：`curl 'http://127.0.0.1:8000/api/health?deep=1'` —— 会真的打开四个库与指标库，
   「进程活着但库坏了」这种假健康会在这一步暴露（失败返回 503）。
+
+## 十五、告警与巡检（2026-10-14 上线）
+
+服务跑起来不等于有人知道它挂了。这里用两个脚本把「出事有人通知」补齐：
+
+```bash
+sh deploy/alert.sh "自定义告警内容"     # 推一条到群机器人（未配 webhook 时只写本地日志）
+sh deploy/monitor.sh                    # 巡检一次（crontab 每 5 分钟自动跑）
+```
+
+**monitor.sh 查三件事**，任一异常即推送，且**只在状态变化时推送**（去抖，避免每 5 分钟刷屏）：
+
+| 检查 | 判据 | 命中后推送 |
+|---|---|---|
+| 健康深检 | `curl /api/health?deep=1` 非 200 / 超时 | 「服务健康检查失败」+ 最近 3 行 error.log；恢复时推一条「已恢复」 |
+| 错误日志突增 | 最近 `MONITOR_ERROR_WINDOW_MIN`（默认 15）分钟内 `error.log` 的 ERROR 行数 ≥ `MONITOR_ERROR_THRESHOLD`（默认 5） | 「错误日志突增」+ 两条样例 |
+| 备份新鲜度 | 最新备份超过 `MONITOR_BACKUP_MAX_HOURS`（默认 36）小时未更新 | 「备份超过 N 小时未更新」 |
+
+另外 `backup.sh` 备份失败时会**立刻**调 alert.sh 推一条（不等巡检发现），退出码保持非零供 cron 记录。
+
+**接入群机器人**（`deploy/.env`，改完即生效，不需要重启容器）：
+
+```ini
+ALERT_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx   # 机器人 URL
+ALERT_FORMAT=wecom        # wecom（企业微信，默认）/ dingtalk（钉钉）/ feishu（飞书）
+```
+
+| 平台 | 取 URL 的位置 | payload 结构 |
+|---|---|---|
+| 企业微信 | 群 → 添加群机器人 → 复制 Webhook | `{"msgtype":"text","text":{"content":"..."}}` |
+| 钉钉 | 群 → 智能群助手 → 自定义机器人 | 同上 |
+| 飞书 | 群 → 设置 → 群机器人 → 自定义机器人 | `{"msg_type":"text","content":{"text":"..."}}` |
+
+**crontab（已装，root）**：
+
+```
+0 3 * * *   cd /home/admin/project/pubmed-analytics && sh deploy/backup.sh  >> deploy/logs/backup.log  2>&1
+*/5 * * * * cd /home/admin/project/pubmed-analytics && sh deploy/monitor.sh >> deploy/logs/monitor.log 2>&1
+```
+
+留痕：`deploy/logs/alert.log`（每条告警 + webhook 返回码）、`deploy/logs/monitor.log`（每轮检查输出）、
+`deploy/logs/.monitor-state`（去抖状态，删掉即「重新开始报」）。
+
+**边界（如实说明）**：巡检是**轮询 + 状态去抖**，最坏情况是「服务挂了最多 5 分钟才通知」；
+它不推送「业务指标」（如日活、额度消耗），那是下一阶段「用量统计」要补的。
