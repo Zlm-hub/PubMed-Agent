@@ -35,30 +35,53 @@ state_set() {
   mv "$tmp" "$STATE"
 }
 
-HEALTH_URL="$(read_env MONITOR_HEALTH_URL)"
-[ -n "$HEALTH_URL" ] || HEALTH_URL="http://127.0.0.1:8000/api/health?deep=1"
+# 健康检查点：支持多个（逗号分隔）。默认只查本机 127.0.0.1。
+# **为什么要配多个**：本机深检只能发现「进程/数据库」层面的问题；
+# nginx 挂了、证书过期、公网入口不通时，本机照样 200 —— 必须**再查一次公网地址**才盖得住。
+# 例：MONITOR_HEALTH_URLS=http://127.0.0.1:8000/api/health?deep=1,http://101.37.23.175:8000/api/health?deep=1
+HEALTH_URLS="$(read_env MONITOR_HEALTH_URLS)"
+if [ -z "$HEALTH_URLS" ]; then
+  HEALTH_URLS="$(read_env MONITOR_HEALTH_URL)"          # 兼容旧配置（单个）
+fi
+[ -n "$HEALTH_URLS" ] || HEALTH_URLS="http://127.0.0.1:8000/api/health?deep=1"
 WINDOW="$(read_env MONITOR_ERROR_WINDOW_MIN)"; [ -n "$WINDOW" ] || WINDOW=15
 THRESHOLD="$(read_env MONITOR_ERROR_THRESHOLD)"; [ -n "$THRESHOLD" ] || THRESHOLD=5
 MAX_HOURS="$(read_env MONITOR_BACKUP_MAX_HOURS)"; [ -n "$MAX_HOURS" ] || MAX_HOURS=36
 
 echo "[$(date '+%F %T')] monitor start"
 
-# ---------- 1) 健康深检 ----------
+# ---------- 1) 健康检查（逐个检查点，各带独立去抖状态）----------
 # 注意：curl 连接失败时自己也会把 %{http_code} 打成 000，所以不能再 `|| echo 000`
 # （那样会拼成 000000，我第一次就这么踩了）。这里只在**取空**时兜底。
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 15 "$HEALTH_URL" 2>/dev/null) || true
-[ -n "$CODE" ] || CODE=000
-if [ "$CODE" = "200" ]; then HEALTH_NOW=ok; else HEALTH_NOW=fail; fi
-echo "  health: $CODE ($HEALTH_NOW)"
-if [ "$HEALTH_NOW" != "$(state_get health)" ]; then
-  if [ "$HEALTH_NOW" = "fail" ]; then
-    ERRTAIL="$(tail -n 3 deploy/logs/error.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
-    sh deploy/alert.sh "服务健康检查失败（HTTP $CODE）：$HEALTH_URL${ERRTAIL:+  最近错误: $ERRTAIL}"
-  else
-    sh deploy/alert.sh "服务已恢复：健康深检 HTTP 200"
+printf '%s\n' "$HEALTH_URLS" | tr ',' '\n' | while IFS= read -r URL; do
+  # 去掉可能的空白；跳过空项
+  URL=$(printf '%s' "$URL" | tr -d ' \t')
+  [ -n "$URL" ] || continue
+  KEY="health_$(printf '%s' "$URL" | tr -c 'a-zA-Z0-9' '_' | cut -c1-48)"
+
+  # --noproxy '*'：健康检查**必须直连**。若环境中存在 http_proxy 等变量，
+  # curl 会把本机探测也发到代理去，拿到的是代理的错误码（实测在带代理的机器上
+  # 连一个不存在的端口都返回 502），巡检结论就全错了。
+  CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -m 15 "$URL" 2>/dev/null) || true
+  [ -n "$CODE" ] || CODE=000
+  if [ "$CODE" = "200" ]; then NOW=ok; else NOW=fail; fi
+  echo "  health: $CODE ($NOW)  $URL"
+
+  # 去抖：只在状态**真的变化**时推送。
+  # 注意「首次运行」的坑：没有历史状态时 state_get 返回空，若只判断 `NOW != PREV`，
+  # 一个本来健康的服务会被当成「刚刚恢复」而推一条假告警（实测踩到）。
+  # 所以「恢复」必须要求上一次明确是 fail。
+  PREV="$(state_get "$KEY")"
+  if [ "$NOW" != "$PREV" ]; then
+    if [ "$NOW" = "fail" ]; then
+      ERRTAIL="$(tail -n 3 deploy/logs/error.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
+      sh deploy/alert.sh "服务不可用（HTTP $CODE）：$URL${ERRTAIL:+  最近错误: $ERRTAIL}"
+    elif [ "$PREV" = "fail" ]; then
+      sh deploy/alert.sh "服务已恢复（HTTP 200）：$URL"
+    fi
+    state_set "$KEY" "$NOW"
   fi
-  state_set health "$HEALTH_NOW"
-fi
+done
 
 # ---------- 2) 错误日志突增 ----------
 ERRL=deploy/logs/error.log
