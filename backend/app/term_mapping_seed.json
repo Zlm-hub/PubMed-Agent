@@ -1,0 +1,632 @@
+[
+ {
+  "term_cn": "1型糖尿病",
+  "term_en": "type 1 diabetes mellitus",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "2型糖尿病",
+  "term_en": "type 2 diabetes mellitus",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "不孕不育",
+  "term_en": "infertility",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "中风",
+  "term_en": "stroke",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "乙肝",
+  "term_en": "hepatitis b",
+  "synonyms": [
+   "hepatitis b virus"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "乳腺癌",
+  "term_en": "breast cancer",
+  "synonyms": [
+   "breast neoplasms"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "偏头痛",
+  "term_en": "migraine",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "免疫治疗",
+  "term_en": "immunotherapy",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "冠心病",
+  "term_en": "coronary artery disease",
+  "synonyms": [
+   "coronary heart disease"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "前列腺炎",
+  "term_en": "prostatitis",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "前列腺癌",
+  "term_en": "prostate cancer",
+  "synonyms": [
+   "prostatic neoplasms"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "化疗",
+  "term_en": "chemotherapy",
+  "synonyms": [
+   "drug therapy"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "哮喘",
+  "term_en": "asthma",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "基因治疗",
+  "term_en": "gene therapy",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "多动症",
+  "term_en": "attention deficit hyperactivity disorder",
+  "synonyms": [
+   "ADHD"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "多囊卵巢",
+  "term_en": "polycystic ovary syndrome",
+  "synonyms": [
+   "PCOS"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "失眠",
+  "term_en": "sleep initiation and maintenance disorders",
+  "synonyms": [
+   "insomnia"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "妊娠糖尿病",
+  "term_en": "gestational diabetes mellitus",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "子宫肌瘤",
+  "term_en": "uterine fibroids",
+  "synonyms": [
+   "uterine leiomyoma"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "宫颈癌",
+  "term_en": "cervical cancer",
+  "synonyms": [
+   "uterine cervical neoplasms"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "尿毒症",
+  "term_en": "uremia",
+  "synonyms": [
+   "renal insufficiency"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "帕金森",
+  "term_en": "parkinson disease",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "帕金森病",
+  "term_en": "parkinson disease",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "干细胞",
+  "term_en": "stem cells",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "强直性脊柱炎",
+  "term_en": "ankylosing spondylitis",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "心力衰竭",
+  "term_en": "heart failure",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "心梗",
+  "term_en": "myocardial infarction",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "心肌梗死",
+  "term_en": "myocardial infarction",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "慢阻肺",
+  "term_en": "chronic obstructive pulmonary disease",
+  "synonyms": [
+   "COPD"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "房颤",
+  "term_en": "atrial fibrillation",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "抑郁症",
+  "term_en": "depression",
+  "synonyms": [
+   "depressive disorder"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "放疗",
+  "term_en": "radiotherapy",
+  "synonyms": [
+   "radiation therapy"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "新冠",
+  "term_en": "covid-19",
+  "synonyms": [
+   "SARS-CoV-2"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "新冠肺炎",
+  "term_en": "covid-19",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "流感",
+  "term_en": "influenza",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "淋巴瘤",
+  "term_en": "lymphoma",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "渐冻人症",
+  "term_en": "amyotrophic lateral sclerosis",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "渐冻症",
+  "term_en": "amyotrophic lateral sclerosis",
+  "synonyms": [
+   "motor neuron disease"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "焦虑症",
+  "term_en": "anxiety",
+  "synonyms": [
+   "anxiety disorders"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "甲亢",
+  "term_en": "hyperthyroidism",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "甲减",
+  "term_en": "hypothyroidism",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "疫苗",
+  "term_en": "vaccine",
+  "synonyms": [
+   "vaccination"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "痛风",
+  "term_en": "gout",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "癌症",
+  "term_en": "cancer",
+  "synonyms": [
+   "neoplasms"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "癫痫",
+  "term_en": "epilepsy",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "白内障",
+  "term_en": "cataract",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "白血病",
+  "term_en": "leukemia",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "类风湿",
+  "term_en": "rheumatoid arthritis",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "类风湿关节炎",
+  "term_en": "rheumatoid arthritis",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "精神分裂症",
+  "term_en": "schizophrenia",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "糖尿病",
+  "term_en": "diabetes mellitus",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "红斑狼疮",
+  "term_en": "lupus erythematosus",
+  "synonyms": [
+   "systemic lupus erythematosus"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "结直肠癌",
+  "term_en": "colorectal cancer",
+  "synonyms": [
+   "colorectal neoplasms"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "老年痴呆",
+  "term_en": "dementia",
+  "synonyms": [
+   "alzheimer disease"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肌萎缩侧索硬化",
+  "term_en": "amyotrophic lateral sclerosis",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肝癌",
+  "term_en": "liver cancer",
+  "synonyms": [
+   "liver neoplasms",
+   "hepatocellular carcinoma"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肠道菌群",
+  "term_en": "gut microbiota",
+  "synonyms": [
+   "gut microbiome"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肥胖",
+  "term_en": "obesity",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肺气肿",
+  "term_en": "pulmonary emphysema",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肺炎",
+  "term_en": "pneumonia",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肺癌",
+  "term_en": "lung cancer",
+  "synonyms": [
+   "lung neoplasms"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肺结核",
+  "term_en": "tuberculosis",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肾炎",
+  "term_en": "nephritis",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肾衰竭",
+  "term_en": "kidney failure",
+  "synonyms": [
+   "renal failure"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "肿瘤",
+  "term_en": "neoplasms",
+  "synonyms": [
+   "tumor"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "胃癌",
+  "term_en": "gastric cancer",
+  "synonyms": [
+   "stomach neoplasms"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "脂肪肝",
+  "term_en": "fatty liver",
+  "synonyms": [
+   "non-alcoholic fatty liver disease"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "脑卒中",
+  "term_en": "stroke",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "脑梗",
+  "term_en": "cerebral infarction",
+  "synonyms": [
+   "ischemic stroke"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "腰椎间盘突出",
+  "term_en": "lumbar disc herniation",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "自闭症",
+  "term_en": "autism",
+  "synonyms": [
+   "autism spectrum disorder"
+  ],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "衰老",
+  "term_en": "aging",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "贫血",
+  "term_en": "anemia",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "近视",
+  "term_en": "myopia",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "阿尔茨海默",
+  "term_en": "alzheimer disease",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "阿尔茨海默病",
+  "term_en": "alzheimer disease",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "青光眼",
+  "term_en": "glaucoma",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "颈椎病",
+  "term_en": "cervical spondylosis",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "骨质疏松",
+  "term_en": "osteoporosis",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "高血压",
+  "term_en": "hypertension",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ },
+ {
+  "term_cn": "黑色素瘤",
+  "term_en": "melanoma",
+  "synonyms": [],
+  "source": "seed",
+  "verified_at": "2026-09-18T22:17:18+08:00"
+ }
+]

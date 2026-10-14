@@ -94,6 +94,15 @@ CREATE TABLE IF NOT EXISTS learned_alias (
     quartile   TEXT,
     updated_at TEXT NOT NULL
 );
+
+-- 词云/MeSH 主题词的中文译名词典（en→zh）。命中即 0ms 复用；
+-- source='manual' 为人工译名，机翻不覆盖（术语不准时直接改表即可）。
+CREATE TABLE IF NOT EXISTS word_zh (
+    term_en    TEXT PRIMARY KEY,
+    term_zh    TEXT NOT NULL,
+    source     TEXT NOT NULL DEFAULT 'llm',
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -243,6 +252,62 @@ def all_approved(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT * FROM term_mapping WHERE status = 'approved' ORDER BY LENGTH(term_cn) DESC"
     ).fetchall()
+
+
+# 术语种子放在**包内**而不是 data/ 下：data/ 在容器里是挂载卷（./data:/app/data），
+# 会把镜像里的文件盖住，导致种子读不到（实测踩过）。包内路径不受挂载影响。
+# 需要换位置时用环境变量 TERM_SEED_PATH 覆盖。
+SEED_PATH = os.getenv("TERM_SEED_PATH") or os.path.join(
+    os.path.dirname(__file__), "term_mapping_seed.json"
+)
+
+
+def seed_mappings(conn: sqlite3.Connection) -> int:
+    """把随包发布的中文术语种子导入 term_mapping，返回导入条数。
+
+    背景：中文术语映射（L0）原本只存在于运行期积累的 literature.db 里，而该库不入包
+    （避免把本机检索历史 / 对话带上生产）。结果新环境部署后 term_mapping 为空，
+    所有中文提问都会退化到大模型改写——多花一次调用、且失去断网/无 key 时的兜底。
+    因此把已审核词条导出为 data/term_mapping_seed.json 作为产品资产随包发布。
+
+    只在**没有任何 approved 词条**时导入：已有正式词条说明本环境已积累过，
+    不再覆盖；而仅有 candidate（大模型改写回流的候选，未过人工复核）时仍应导入种子——
+    否则新环境跑过一次中文查询、落下一条候选，就会把整个种子挡在门外。
+    """
+    try:
+        if conn.execute(
+            "SELECT COUNT(*) FROM term_mapping WHERE status = 'approved'"
+        ).fetchone()[0]:
+            return 0
+        if not os.path.isfile(SEED_PATH):
+            return 0
+        with open(SEED_PATH, encoding="utf-8") as f:
+            rows = json.load(f)
+    except (OSError, ValueError, sqlite3.Error):
+        return 0
+
+    added = 0
+    for r in rows or []:
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO term_mapping
+                    (term_cn, term_en, synonyms, source, verified_at, status)
+                VALUES (?, ?, ?, ?, ?, 'approved')
+                """,
+                (
+                    str(r.get("term_cn") or "").strip(),
+                    str(r.get("term_en") or "").strip(),
+                    json.dumps(r.get("synonyms") or [], ensure_ascii=False),
+                    r.get("source") or "seed",
+                    r.get("verified_at"),
+                ),
+            )
+            added += 1
+        except sqlite3.Error:
+            continue
+    conn.commit()
+    return added
 
 
 def upsert_mapping(

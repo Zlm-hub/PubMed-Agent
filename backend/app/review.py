@@ -6,7 +6,9 @@
 """
 from __future__ import annotations
 
+import json
 import re
+import time as _time
 
 import httpx
 
@@ -174,3 +176,77 @@ async def generate_review(
 
     sources = _extract_sources(text, [pmid for pmid, _ in abstracts])
     return {"text": text, "sources": sources}
+
+
+async def generate_review_stream(
+    abstracts: list[tuple[str, str]],
+    context: dict | None = None,
+):
+    """流式版综述（SSE 用）：逐段 yield 事件，最终 yield done（返回契约同 generate_review）。
+
+    事件协议：
+      {"type": "delta", "text": chunk}                       —— 增量文本
+      {"type": "done", "text": 全文, "sources": [...], "mock"?: True}
+    与 generate_review 共用 prompt / 来源白名单校验 / mock 兜底 / 监控埋点，
+    唯一差别是 LLM 调用走 stream=True 并把增量转发出来；mock（无 key）时按行切块推送，
+    现场观感与真实流式一致。异常处理同 generate_review：monitor 记录后原样抛出，
+    由上层（SSE 端点）转成 error 事件。
+    """
+    if not abstracts:
+        yield {"type": "done", "text": "未检索到含摘要的文献，无法生成综述。", "sources": [], "mock": True}
+        return
+
+    valid = [pmid for pmid, _ in abstracts]
+
+    if config.MOCK_LLM or not config.DASHSCOPE_API_KEY:
+        text = _mock_review(context, abstracts)
+        for line in text.splitlines(keepends=True):
+            if line:
+                yield {"type": "delta", "text": line}
+        monitor.step("review", "mock.generated", chars=len(text), sources=len(abstracts))
+        yield {"type": "done", "text": text, "sources": _extract_sources(text, valid), "mock": True}
+        return
+
+    prompt = build_prompt(abstracts)
+    headers = {
+        "Authorization": f"Bearer {config.DASHSCOPE_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": config.LLM_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3,
+        "max_tokens": 900,
+        "stream": True,
+    }
+    t0 = _time.perf_counter()
+    buf: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            async with client.stream(
+                "POST",
+                f"{config.DASHSCOPE_BASE_URL}/chat/completions",
+                headers=headers,
+                json=payload,
+            ) as r:
+                r.raise_for_status()
+                async for line in r.aiter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        obj = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    delta = ((obj.get("choices") or [{}])[0].get("delta") or {}).get("content") or ""
+                    if delta:
+                        buf.append(delta)
+                        yield {"type": "delta", "text": delta}
+    except Exception as e:  # noqa: BLE001
+        monitor.step("review", "llm.failed", ok=False, exc=True, error=str(e), model=config.LLM_MODEL)
+        raise
+    text = "".join(buf)
+    monitor.step("review", "llm.done", chars=len(text), ms=(_time.perf_counter() - t0) * 1000, model=config.LLM_MODEL)
+    yield {"type": "done", "text": text, "sources": _extract_sources(text, valid)}

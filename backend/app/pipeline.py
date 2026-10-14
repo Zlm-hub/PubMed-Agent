@@ -22,12 +22,20 @@ async def build_payload(
     max_results: int,
     include_review: bool = True,
     current_year: int | None = None,
+    on_event=None,
 ) -> dict:
+    """唯一编排入口。on_event 为可选回调（SSE 流式用）：传入后每个阶段发
+    {"type":"stage", key/label/status/ms/detail} 事件、综述逐字发
+    {"type":"review_delta", text}；默认 None 时行为与旧版完全一致（不产生任何事件）。"""
     if current_year is None:
         current_year = datetime.date.today().year
 
     trace: list[dict] = []
     t_all = time.perf_counter()
+
+    def stage_running(key: str, label: str) -> None:
+        if on_event:
+            on_event({"type": "stage", "key": key, "label": label, "status": "running"})
 
     def mark(stage: str, label: str, started: float, ok: bool = True, detail: str = "") -> None:
         ms = round((time.perf_counter() - started) * 1000)
@@ -40,8 +48,18 @@ async def build_payload(
         })
         # 同源写监控日志：trace 给前端回放，monitor 给文件排障（设计见监控日志设计方案）
         monitor.step("pipeline", stage, ok=ok, ms=ms, label=label, detail=detail)
+        if on_event:
+            on_event({
+                "type": "stage",
+                "key": stage,
+                "label": label,
+                "status": "done" if ok else "error",
+                "ms": ms,
+                "detail": detail,
+            })
 
     # 阶段 0：中文查询改写（渐冻症 → ALS）。纯英文输入在 rewrite 内部直通，零开销
+    stage_running("rewrite", "查询改写")
     t = time.perf_counter()
     rewrite = await query_translate.rewrite(query)
     search_term = rewrite["term"]
@@ -57,11 +75,13 @@ async def build_payload(
     )
 
     # 阶段 1/3：NCBI 检索
+    stage_running("search", "PubMed 检索")
     t = time.perf_counter()
     total, articles = await pubmed.search_pubmed(search_term, max_results, config.NCBI_API_KEY)
     mark("search", "PubMed 检索", t, detail=f"命中 {total:,} 篇 · 取回 {len(articles)} 篇")
 
     # 阶段 2/3：聚合统计（纯本地计算）
+    stage_running("stats", "聚合统计")
     t = time.perf_counter()
     stats = analyze.analyze(articles, current_year)
     known = stats["if_statistics"]["known_count"]
@@ -83,12 +103,34 @@ async def build_payload(
             for a in articles
             if a.get("abstract")
         ][: config.REVIEW_TOP_N]
-        t = time.perf_counter()
         if abstracts:
-            review_result = await review.generate_review(
-                abstracts,
-                context={"query": query, "total": total, "stats": stats},
-            )
+            stage_running("review", "中文综述")
+            t = time.perf_counter()
+            if on_event is not None:
+                # 流式路径：逐字透传增量，同时累积成与 generate_review 相同的返回契约
+                text_buf: list[str] = []
+                review_result: dict = {}
+                async for ev in review.generate_review_stream(
+                    abstracts,
+                    context={"query": query, "total": total, "stats": stats},
+                ):
+                    if ev["type"] == "delta":
+                        text_buf.append(ev["text"])
+                        on_event(ev)
+                    elif ev["type"] == "done":
+                        review_result = {
+                            "text": ev["text"],
+                            "sources": ev["sources"],
+                            **({"mock": True} if ev.get("mock") else {}),
+                        }
+                if not review_result:
+                    # 生成器没给出 done 就结束（异常中断）——与旧路径一致抛错，由上层转错误
+                    raise RuntimeError("综述流式生成提前结束")
+            else:
+                review_result = await review.generate_review(
+                    abstracts,
+                    context={"query": query, "total": total, "stats": stats},
+                )
             mark(
                 "review",
                 "中文综述",
