@@ -133,7 +133,9 @@ cd deploy && docker compose up -d --no-build
 
 ### 情形 B：服务器上**已有 nginx**（推荐复用，避免 80/443 冲突）
 
-> 本项目已经准备好一份**可直接落地**的子域名 HTTPS 配置：`deploy/nginx-pubmed.conf`
+> 本项目已经准备好一条命令落地子域名 HTTPS：`DOMAIN=pubmed.tangchaolizi.xyz EMAIL=你@邮箱 sh deploy/setup-https.sh`
+> （幂等：会先预检 DNS，未解析就安全退出、不碰服务器；然后装 certbot → 放 nginx 配置 → 签发证书 → 验 https 与续期演练）。
+> 手动等价做法用到的配置文件是 `deploy/nginx-pubmed.conf`
 > （80→301 + ACME 挑战目录 + 443 反代，SSE 关缓冲、透传 X-Forwarded-For 以便后端按真实 IP 限流）。
 > 落地四步：① DNS 加 A 记录 ② 放到 `/etc/nginx/conf.d/` 并 reload ③ `certbot --nginx -d <子域名>`
 > ④ 只走 https 时把 `ACCESS_COOKIE_SECURE=1` 并重建容器（若仍保留 http 直连则保持 0）。
