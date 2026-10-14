@@ -53,6 +53,21 @@ jobs:
       - name: 备份脚本自检（在线备份 + 完整性校验）
         run: python deploy/backup.py --out /tmp/pa-backup --keep 1
 
+      - name: 换行符红线检查（deploy/*.sh 必须是 LF）
+        run: |
+          python - <<'PY'
+          import pathlib
+          import sys
+
+          bad = [str(p) for p in sorted(pathlib.Path("deploy").glob("*.sh")) if b"\r\n" in p.read_bytes()]
+          if bad:
+              print("::error::以下脚本含 CRLF —— 服务器用 dash，会报 `Illegal option -` 导致部署中断：")
+              for b in bad:
+                  print("   -", b)
+              sys.exit(1)
+          print("OK：deploy/*.sh 全部为 LF")
+          PY
+
   frontend:
     name: 前端构建（含类型检查）
     runs-on: ubuntu-latest
