@@ -4,6 +4,7 @@ import glob
 import hashlib
 import json
 import os
+import sqlite3
 import time
 
 import uvicorn
@@ -13,9 +14,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import cache, config, monitor, pipeline, sessiondb, userdb, wordzh
+from . import cache, config, guard, monitor, pipeline, sessiondb, userdb, wordzh
 
-app = FastAPI(title="PubMed 文献分析", version="0.5.0")
+app = FastAPI(title="PubMed 文献分析", version="0.6.0")
+
+# 访问防护（登录锁定 / 速率限制）按配置初始化；测试改完 config 后再调一次 guard.setup() 即生效
+guard.setup()
 
 # 无需鉴权即可访问的路径（健康检查用于前端探活；鉴权接口自身做校验）。
 # 注意：注册接口必须在这里——它是"还没有身份的人"唯一的入口，闸门放行后由接口
@@ -92,12 +96,35 @@ async def _access_gate(request: Request, call_next):
       - 放行的 /api/* 请求落 `api.access`（method/path/status/耗时/用户），
         health 与 analyze/stream 除外——health 是探活噪音，analyze 有更细的
         request.start/done，重复记只会稀释日志。
+
+    2026-10-14 面向真实运营加固：在闸门这里加**按 IP 的速率限制**（防单 IP 刷爆
+    NCBI / 百炼额度）。分析类端点单列更严的额度；`/api/health` 豁免（监控探活不能
+    被限流，否则会被误判为服务不可用）。被限流时回 429 + `Retry-After`，并留审计日志。
     """
     path = request.url.path
     request.state.user = None
     started = time.perf_counter()
     if path.startswith("/api/"):
         monitor.set_request_id()
+
+    # ---- 速率限制（health 豁免；analyze 走更严的独立额度）----
+    if path.startswith("/api/") and path != "/api/health":
+        ip = guard.client_ip(request)
+        limiter = guard.analyze_rate if path.startswith("/api/analyze") else guard.api_rate
+        allowed, retry = limiter.hit(ip)
+        # 顺手做一次键清理，防止长期运行内存无界增长
+        limiter.sweep()
+        if not allowed:
+            monitor.warning(
+                "guard", "rate.limited", path=path, method=request.method, client=ip,
+                retry_after=retry, scope="analyze" if limiter is guard.analyze_rate else "api",
+            )
+            return JSONResponse(
+                {"detail": f"请求过于频繁，请 {retry} 秒后重试"},
+                status_code=429,
+                headers={"Retry-After": str(retry)},
+            )
+
     if path.startswith("/api/") and path not in _OPEN_PATHS:
         user = _resolve_user(request)
         required = _users_active() or bool(config.ACCESS_CODE)
@@ -238,8 +265,53 @@ def _persist_cache(key: str, payload: dict) -> None:
 
 
 @app.get("/api/health")
-def health():
-    return {"status": "ok", "service": "pubmed-analytics"}
+def health(deep: int = 0):
+    """探活端点。
+
+    默认只回服务自身状态（给前端探活、给容器 healthcheck 用，极轻）；
+    `?deep=1` 时额外核查「四个库真的打得开、指标库在位」——巡检脚本 / 监控告警用它，
+    避免「进程活着但库打不开」这类假健康被漏掉。任一深检失败则返回 503。
+    """
+    if not deep:
+        return {"status": "ok", "service": "pubmed-analytics"}
+
+    checks: dict[str, object] = {}
+    ok = True
+
+    def run(name: str, fn) -> None:
+        nonlocal ok
+        try:
+            checks[name] = fn()
+        except Exception as e:  # noqa: BLE001
+            ok = False
+            checks[name] = f"error: {type(e).__name__}: {e}"
+
+    def _users_rows() -> int:
+        conn = userdb.connect()
+        try:
+            return conn.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
+        finally:
+            conn.close()
+
+    def _metrics_journals() -> int:
+        db = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "data", "journal_metrics.db")
+        )
+        if not os.path.exists(db):
+            raise FileNotFoundError("journal_metrics.db 缺失（分区/影响因子会全部为「未知」）")
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)  # 只读打开，绝不写
+        try:
+            return conn.execute("SELECT COUNT(*) FROM journal").fetchone()[0]
+        finally:
+            conn.close()
+
+    run("users_rows", _users_rows)
+    run("session_threads", lambda: len(sessiondb.list_threads(limit=1)))
+    run("metrics_journals", _metrics_journals)
+    checks["cache_entries"] = len(_cache)
+
+    payload = {"status": "ok" if ok else "degraded", "service": "pubmed-analytics", "deep": checks}
+    return payload if ok else JSONResponse(payload, status_code=503)
 
 
 class AuthRequest(BaseModel):
@@ -270,7 +342,12 @@ def _public_user(user: dict | None) -> dict | None:
 
 
 def _set_login_cookie(response: Response, user: dict) -> None:
-    """签发登录 cookie 并清掉旧共享口令 cookie（同一逻辑登录/注册共用）。"""
+    """签发登录 cookie 并清掉旧共享口令 cookie（同一逻辑登录/注册共用）。
+
+    `httponly=True`（2026-10-14 加固）：登录凭证对前端 JS 不可见——一旦页面出现 XSS，
+    攻击者也无法用 `document.cookie` 偷走登录态。前端全程不读 cookie（已全仓确认），
+    同源请求与 EventSource 自动携带，所以这个改动对链路零影响。
+    """
     response.delete_cookie(config.ACCESS_COOKIE)
     response.set_cookie(
         key=config.AUTH_COOKIE,
@@ -278,13 +355,13 @@ def _set_login_cookie(response: Response, user: dict) -> None:
         max_age=userdb.TOKEN_TTL,
         samesite="lax",
         secure=config.ACCESS_COOKIE_SECURE,
-        httponly=False,
+        httponly=True,
     )
 
 
 def _device_hint(request: Request) -> str:
-    """注册来源（排障/审计用，仅存 60 字符）。"""
-    ip = request.client.host if request.client else ""
+    """注册来源（排障/审计用，仅存 60 字符）。走 guard.client_ip 以兼容 nginx 反代后的真实 IP。"""
+    ip = guard.client_ip(request)
     return (request.headers.get("user-agent", "")[:40] + f" | {ip}").strip(" |")
 
 
@@ -321,18 +398,33 @@ def auth_status(request: Request):
 def auth_login(req: AuthRequest, request: Request, response: Response):
     """登录。用户体系激活 → 用户名+密码签发 token cookie；否则退回旧口令校验。
 
-    成功/失败都落审计日志（2026-09-21 用户要求记录登录退出）：
-    `auth.login.ok` / `auth.login.failed` / `auth.code.failed`，带用户名、IP 与 UA 摘要。
+    成功/失败都落审计日志（2026-09-21）：`auth.login.ok` / `auth.login.failed` / `auth.code.failed`。
+
+    失败锁定（2026-10-14 加固）：同一「IP + 用户名」在窗口内失败达上限即冷却，
+    期间直接返回 429 + `Retry-After`，**不再走密码校验**（省掉 PBKDF2 的 10 万轮开销，
+    也避免被当成密码爆破的算力放大器）；成功登录立刻清零计数。
     """
-    client = request.client.host if request.client else None
+    client = guard.client_ip(request)
     ua = request.headers.get("user-agent", "")[:60]
     if _users_active():
         name = req.username.strip()
+        lock_key = f"{client}|{name.lower()}"
+        wait = guard.login_fail.retry_after(lock_key)
+        if wait:
+            monitor.warning("guard", "login.locked", user=name, client=client, retry_after=wait)
+            raise HTTPException(
+                status_code=429,
+                detail=f"登录失败次数过多，请 {wait} 秒后再试",
+                headers={"Retry-After": str(wait)},
+            )
         user = userdb.authenticate(name, req.password)
         if user is None:
             # 失败留痕是安全审计的基本盘：连续失败可在此发现撞库/忘密码
-            monitor.warning("auth", "login.failed", user=name, client=client, ua=ua)
+            allowed, retry = guard.login_fail.hit(lock_key)
+            monitor.warning("auth", "login.failed", user=name, client=client, ua=ua,
+                            locked=not allowed, retry_after=retry or None)
             raise HTTPException(status_code=401, detail="用户名或密码不正确")
+        guard.login_fail.reset(lock_key)
         userdb.touch_login(user["id"])
         _set_login_cookie(response, user)
         monitor.step("auth", "login.ok", user=user["username"], role=user["role"], client=client, ua=ua)
@@ -348,7 +440,7 @@ def auth_login(req: AuthRequest, request: Request, response: Response):
         max_age=60 * 60 * 24 * 30,  # 30 天
         samesite="lax",
         secure=config.ACCESS_COOKIE_SECURE,
-        httponly=False,
+        httponly=True,
     )
     monitor.step("auth", "login.ok", user="(口令模式)", client=client, ua=ua)
     return {"ok": True}
@@ -369,12 +461,24 @@ def auth_register(req: RegisterRequest, request: Request, response: Response):
         raise HTTPException(status_code=403, detail="本服务未开放自助注册，请联系管理员开通账号")
     username = req.username.strip()
     password = req.password
+    client = guard.client_ip(request)
     boot = not _users_active()
     if boot:
         # 只为避免"全新部署无人能进"的场景；已有管理员时走后台建号
         existing_admin = userdb.first_admin()
         if existing_admin is not None:
             raise HTTPException(status_code=403, detail="本服务未开放自助注册，请联系管理员开通账号")
+    else:
+        # 注册限流（2026-10-14 加固）：挡「批量注册账号刷试用额度」——额度按账号计，
+        # 不限注册就等于额度形同虚设。首引导那次（boot）不受限，否则全新部署进不去。
+        allowed, retry = guard.register_rate.hit(client)
+        if not allowed:
+            monitor.warning("guard", "register.limited", client=client, retry_after=retry)
+            raise HTTPException(
+                status_code=429,
+                detail="注册过于频繁，请稍后再试或直接联系管理员开通账号",
+                headers={"Retry-After": str(retry)},
+            )
     try:
         user = userdb.create_user(
             username, password,
@@ -383,7 +487,7 @@ def auth_register(req: RegisterRequest, request: Request, response: Response):
             source=_device_hint(request),
         )
     except ValueError as e:
-        monitor.warning("auth", "register.failed", user=username, client=request.client.host if request.client else None, error=str(e))
+        monitor.warning("auth", "register.failed", user=username, client=client, error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
     userdb.touch_login(user["id"])
     _set_login_cookie(response, user)

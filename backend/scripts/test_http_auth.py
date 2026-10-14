@@ -20,8 +20,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app import config  # noqa: E402
 from app import main as appmain  # noqa: E402
 from app import sessiondb, userdb  # noqa: E402
+
+# 本套测试关注的是闸门/登录登出语义，**不测访问防护**：这里显式关掉限流与登录锁定，
+# 避免"注册满 3 个账号被 429""失败次数超限被锁"之类的相互干扰（防护单独由
+# scripts/test_guard.py 覆盖）。改这里的默认值前先想清楚是否在削弱测试隔离性。
+from app import guard as _guard  # noqa: E402
+
+config.LOGIN_MAX_FAILS = 0
+config.LOGIN_LOCK_SECONDS = 300
+config.RATE_LIMIT_PER_MIN = 0
+config.ANALYZE_RATE_PER_MIN = 0
+config.REGISTER_PER_DAY = 0
+_guard.setup()
+
 
 userdb.DB_PATH = str(TMP / "users.db")
 sessiondb.DB_PATH = str(TMP / "sessions.db")

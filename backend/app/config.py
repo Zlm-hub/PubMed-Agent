@@ -150,3 +150,18 @@ FREE_TRIAL_LIMIT = int(os.getenv("FREE_TRIAL_LIMIT", "0") or "0")
 
 # 联系方式：额度用尽时拼进提示语（如 `QQ3184331768`）。留空则只说「请联系管理员」。
 ADMIN_CONTACT = os.getenv("ADMIN_CONTACT", "")
+
+# ---- 访问防护（2026-10-14 面向真实运营加固）------------------------------------
+# 登录失败锁定：同一「IP + 用户名」在 LOGIN_LOCK_SECONDS 秒内失败达 LOGIN_MAX_FAILS 次
+# 即冷却（返回 429 + Retry-After），成功登录立刻清零。0 = 关闭该防护。
+LOGIN_MAX_FAILS = int(os.getenv("LOGIN_MAX_FAILS", "8") or "0")
+LOGIN_LOCK_SECONDS = int(os.getenv("LOGIN_LOCK_SECONDS", "300") or "300")
+
+# 接口速率限制（按来源 IP，滑动窗口 60 秒）：防单 IP 刷爆 NCBI / 百炼额度。0 = 关闭。
+# 演示与自检脚本都从单一 IP 发起，默认值刻意留宽松。
+RATE_LIMIT_PER_MIN = int(os.getenv("RATE_LIMIT_PER_MIN", "300") or "0")
+# 分析类接口单列更严的额度（最贵：一次调用 = NCBI 往返 + 大模型生成）
+ANALYZE_RATE_PER_MIN = int(os.getenv("ANALYZE_RATE_PER_MIN", "30") or "0")
+
+# 自助注册：同一 IP 每天最多开几个账号（挡「批量注册刷试用额度」）。0 = 关闭。
+REGISTER_PER_DAY = int(os.getenv("REGISTER_PER_DAY", "3") or "0")
