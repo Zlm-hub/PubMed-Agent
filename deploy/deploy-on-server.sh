@@ -76,7 +76,7 @@ if [ $i -ge 180 ]; then
 fi
 
 echo "==> 自检"
-echo -n "   /api/health                 → "; curl -s -m 5 http://127.0.0.1:8000/api/health || echo "(无响应)"
+echo -n "   /api/health?deep=1          → "; curl -s -m 8 "http://127.0.0.1:8000/api/health?deep=1" || echo "(无响应)"
 echo
 echo -n "   /api/demo/presets 未登录     → 期望 401，实际 "
 curl -s -m 5 -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/api/demo/presets

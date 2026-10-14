@@ -375,3 +375,59 @@ POST /api/analyze「肺癌」     → source=mapping（走本地映射）、命�
 刷新后顶栏变「免费试用已用尽」+ 顶部常驻提示条。后端回归脚本
 `backend/scripts/test_trial_limit.py`（27 项）覆盖限额 0/1/3、管理员豁免、
 SSE 超限、重置额度与 open 模式不受限。
+
+## 十三、备份与恢复（2026-10-14 补）
+
+```bash
+# 手动备份（默认写 deploy/backups/，保留 7 份）
+sh deploy/backup.sh
+KEEP=14 sh deploy/backup.sh
+OUT=/mnt/nas/pa sh deploy/backup.sh      # 推荐：写到另一块盘/挂载点
+
+# 定时（每天 03:00）
+crontab -e
+0 3 * * * cd /home/admin/project/pubmed-analytics && sh deploy/backup.sh >> deploy/logs/backup.log 2>&1
+```
+
+**要不要停服**：不用。脚本用 sqlite3 的在线备份 API（`Connection.backup`）逐页复制，
+对源库只加读锁，服务照常写入；备份完成后对副本跑 `PRAGMA integrity_check`，
+在输出里逐个库打印 `[OK]/[FAIL]`（有 FAIL 时脚本以退出码 1 结束，方便 cron 告警）。
+
+**恢复步骤**：
+
+```bash
+cd /home/admin/project/pubmed-analytics
+ls -la deploy/backups/                     # 选一份备份
+tar xzf deploy/backups/pa-backup-<时间戳>.tar.gz -C /tmp/pa-restore
+
+sudo docker compose -f deploy/docker-compose.yml stop app     # ① 停容器（避免写坏库）
+cp /tmp/pa-restore/data__users.db        deploy/data/users.db        # ② 按需还原
+cp /tmp/pa-restore/data__sessions.db     deploy/data/sessions.db
+cp /tmp/pa-restore/data__literature.db   deploy/data/literature.db
+cp /tmp/pa-restore/data__journal_metrics.db deploy/data/journal_metrics.db
+rm -f deploy/data/*.db-wal deploy/data/*.db-shm               # ③ 清掉 WAL/SHM 残片
+sudo docker compose -f deploy/docker-compose.yml up -d --no-build   # ④ 起容器
+curl -s 'http://127.0.0.1:8000/api/health?deep=1'             # ⑤ 深检：库真的打开了
+```
+
+> 备份包里的文件名是 `<目录>__<库名>.db`（例如 `data__users.db`），前缀是为了区分
+> `deploy/data` 与 `backend/data` 两处同名库，恢复时按需改回 `<库名>.db` 放到 `deploy/data/`。
+
+**边界**：只做本机快照 + 轮转，**不含异地容灾**；请把 `--out` 指到另一块盘或远端挂载点，
+并监控 `deploy/logs/backup.log` 与脚本退出码。
+
+## 十四、访问防护（2026-10-14 上线）
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `LOGIN_MAX_FAILS` / `LOGIN_LOCK_SECONDS` | 8 / 300 | 登录失败锁定：同 IP+用户名 300 秒内失败 8 次即冷却，返回 429 + Retry-After |
+| `RATE_LIMIT_PER_MIN` | 300 | 每 IP 每分钟接口上限（`/api/health` 豁免） |
+| `ANALYZE_RATE_PER_MIN` | 30 | 每 IP 每分钟分析上限（最贵的两个端点单列） |
+| `REGISTER_PER_DAY` | 3 | 每 IP 每天自助注册账号数（挡批量注册刷试用额度） |
+
+- 登录 cookie 已改 **HttpOnly**：前端 JS 读不到凭证，XSS 也偷不走登录态（前端全程不读 cookie，链路零影响）。
+- 计数是**进程内内存**（单容器单 worker）：重启清零；多实例部署需换 Redis（只改 `app/guard.py`）。
+- 审计：被限流/被锁定都会落 `guard.rate.limited`、`guard.login.locked`、`guard.register.limited` 日志，
+  可在 `deploy/logs/app.log` 里查来源 IP 与重试秒数。
+- 深检探活：`curl 'http://127.0.0.1:8000/api/health?deep=1'` —— 会真的打开四个库与指标库，
+  「进程活着但库坏了」这种假健康会在这一步暴露（失败返回 503）。

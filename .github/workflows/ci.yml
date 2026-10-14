@@ -1,0 +1,74 @@
+name: CI
+
+# 真实项目的基本盘：每次改动都跑一遍「离线回归 + 构建」，避免把坏版本推上线。
+# 设计约束（有意为之）：
+#   - 全部离线：回归测试用临时库 + 预置缓存，不碰 NCBI / 大模型，CI 里不花额度也不 flaky；
+#   - 不依赖 pytest：测试是自带断言的独立脚本（`python scripts/test_x.py`），零额外依赖；
+#   - 与部署解耦：CI 只负责「能不能跑」，上线仍走 deploy/sync-to-server.sh（手动确认）。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: 后端回归（129 项）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 安装依赖
+        run: pip install -r backend/requirements.txt
+
+      - name: 导入自检（语法 / 依赖 / 配置加载）
+        working-directory: backend
+        run: python -c "import app.main; print('import ok')"
+
+      - name: 访问防护回归（HttpOnly / 登录锁定 / 限流 / 注册限流）
+        working-directory: backend
+        run: python scripts/test_guard.py
+
+      - name: 鉴权回归（闸门三模式 / 登录登出）
+        working-directory: backend
+        run: python scripts/test_http_auth.py
+
+      - name: 会话隔离回归
+        working-directory: backend
+        run: python scripts/test_user_isolation.py
+
+      - name: 注册与首引导回归
+        working-directory: backend
+        run: python scripts/test_auth_register.py
+
+      - name: 试用额度回归
+        working-directory: backend
+        run: python scripts/test_trial_limit.py
+
+      - name: 备份脚本自检（在线备份 + 完整性校验）
+        run: python deploy/backup.py --out /tmp/pa-backup --keep 1
+
+  frontend:
+    name: 前端构建（含类型检查）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装依赖
+        working-directory: frontend
+        run: npm ci
+
+      - name: 构建（tsc -b && vite build）
+        working-directory: frontend
+        run: npm run build

@@ -38,6 +38,7 @@ deploy/data/
 deploy/cache/
 deploy/logs/
 deploy/certs/
+deploy/backups/
 
 # ---- Python ----
 __pycache__/
