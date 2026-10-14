@@ -64,7 +64,7 @@ export default function Thinking() {
             </div>
             <p className="text-ink/80">
               F1–F3 是确定性统计，不需要向量库/智能体；综述只用「取 Top 摘要 → 1 次 LLM 调用 → 分点中文 + 标 PMID」，
-              轻量、可复现、易讲解。过早引入 RAG/多智能体只增复杂度，对本次笔试需求无收益。
+              轻量、可复现、易讲解。过早引入 RAG/多智能体只增复杂度，对当前需求无收益。
             </p>
           </div>
         </div>
