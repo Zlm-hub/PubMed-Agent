@@ -48,30 +48,42 @@ export interface ChatMessage {
   request_id?: string;
   /** 本次要展示的 Top 榜单条数，来自 parseIntent */
   topN?: number;
+  /** 用户的原话（未经关键词提取）；用于保存标题与报告标题，不改变检索词 */
+  askText?: string;
+  /** SSE 流式生成中的综述增量文本；done 到达后由 result.review 接管渲染，此字段不再显示 */
+  reviewLive?: string;
   ts: number;
 }
 
 export interface Session {
   id: string;
-  /** 会话标题，取首次检索关键词 */
+  /** chat = 对话线程；report = 报告文档（全量快照，可关联来源对话） */
+  kind: "chat" | "report";
+  /** 标题（对话取首问；报告取主题词） */
   title: string;
-  query: string;
   ts: number;
+  /** 主题词（报告靠它复现，也是复用键的一部分） */
+  query?: string | null;
+  /** 报告 → 来源对话 id；独立报告为 null。删对话后此处置空（报告保留） */
+  chatId?: string | null;
+  /** 报告摘要（篇数/字数/耗时），列表直接显示，无需打开 */
+  meta?: ReportMeta | null;
+  /** 线程内的问答轮次数（仅对话有值） */
+  exchanges?: number;
+  /** 归属用户 id（普通用户侧栏恒为自己；管理后台视图用于显示归属） */
+  user_id?: string | null;
 }
 
-/** 结果聚焦维度：快捷开始入口用它决定助手消息里哪一块默认展开 */
+/** 报告列表摘要（对应后端 meta_json） */
+export interface ReportMeta {
+  total?: number;
+  returned?: number;
+  review_chars?: number;
+  elapsed_ms?: number;
+}
+
+/** 结果聚焦维度：控制助手消息里结果块的展示顺序（当前入口收敛后恒为 all，保留以备将来按需聚焦） */
 export type Focus = "all" | "stats" | "cloud" | "top100" | "review";
-
-export interface QuickStart {
-  id: string;
-  label: string;
-  desc: string;
-  /** 点击后预填到输入框的真实可用关键词（PubMed 能检索到结果） */
-  keyword: string;
-  focus: Focus;
-  /** true 表示尚未实现，UI 上置灰并标注「规划中」 */
-  planned?: boolean;
-}
 
 export const MIN_REPLAY_MS = 2600;
 export const DEFAULT_MAX_RESULTS = 200;
@@ -112,12 +124,16 @@ const TOP_N_STRIP_RE =
 const LEADING_FILLER_RE = new RegExp(
   "^(?:" +
   [
+    // 「能给我一下关于 X 的文献」「能不能帮我找找 X」：允许「能/可以」开头，
+    // 且「给我/帮我」后面可以**不带动词**（实测漏网：整句被当检索词 → 0 命中）
+    "(?:能|能否|能不能|可以|可不可以)\\s*(?:给我|帮我)(?:看|查|找|搜|检索|来)*(?:一下|下)?",
+    "(?:能|能否|能不能|可以|可不可以)\\s*(?:给我|帮我)(?:看|查|找|搜|检索|来)+(?:一下|下)?",
     // 「我要看看」「请帮我看一下」这类：动词允许重复出现，否则会剩一个「看」
     "我(?:想|要|需要)?(?:看|查|了解|知道|检索|搜)+(?:一下|下)?",
     "帮(?:我)?(?:看|查|找|检索|搜)+(?:一下|下)?",
     "给我(?:看|查|找|来)(?:一下|下)?",
     "请(?:帮我)?(?:看|查|检索|搜|列出)(?:一下|下)?",
-    "麻烦(?:帮我)?(?:看|查|检索|搜)(?:一下|下)?",
+    "麻烦(?:帮我|给我)?(?:看|查|找|检索|搜)+(?:一下|下)?",
     // 双字动词整体命中，避免把「看護学」的「看」削掉
     "(?:查找|查看|查阅|搜索|检索|看看)(?:一下|下)?",
     "(?:看|查|找|搜)(?:一下|下)",
@@ -138,7 +154,7 @@ const LEADING_VERB_RE = /^(?:看|查|找|搜|求|请)(?=[\s，,：:、的])[\s�
 
 /** 结尾的泛化词：的 / 的研究 / 的相关文献 / 方面 … */
 const TRAILING_FILLER_RE =
-  /[\s，,。.！!？?、]*(?:的)?(?:前)?(?:研究|文献|论文|文章|进展|现状|资料|相关(?:研究|文献|论文|资料)|方面|领域)?[\s，,。.！!？?吧呢啊吗]*$/;
+  /[\s，,。.！!？?、]*(?:的)?(?:前)?(?:研究|文献|论文|文章|进展|现状|资料|综述|相关(?:研究|文献|论文|资料)|方面|领域)?[\s，,。.！!？?吧呢啊吗]*$/;
 
 /** 本身就是泛化词的检索词——不能再被削（「研究进展」不该变成「研究」） */
 const GENERIC_ONLY_RE = /^(?:研究|文献|论文|文章|进展|现状|资料|方面|领域|相关)$/;
@@ -188,19 +204,36 @@ export function parseIntent(raw: string): ParsedIntent {
 }
 
 /**
- * 快捷开始入口。前 6 项对应已实现的真实能力，后 2 项是明确的路线图占位
- * （参考产品有选题助手 / 元分析全流程，本项目尚未实现，如实标注而非虚标）。
+ * 侧栏主要入口。2026-09-19 收敛两轮：① 原六个「快捷开始」（文献检索/统计概览/词云与趋势/
+ * 影响力 Top100/中文综述/中文检索）经确认与正常对话产出 **100% 重叠**，已移除；
+ * ② 「设计思考」页按用户要求下线（不再作为功能展示）。现只保留两个真视图入口。
  */
-export const QUICK_STARTS: QuickStart[] = [
-  { id: "search", label: "文献检索", desc: "关键词 → PubMed 全量分析", keyword: "Alzheimer", focus: "all" },
-  { id: "stats", label: "统计概览", desc: "数量 / 年份 / 分区 / 影响因子", keyword: "CRISPR cancer", focus: "stats" },
-  { id: "cloud", label: "词云与趋势", desc: "关键词词频 + 研究方向聚类", keyword: "COVID-19 vaccine", focus: "cloud" },
-  { id: "top100", label: "影响力 Top100", desc: "近 5 年影响因子排序，可导出", keyword: "cancer immunotherapy", focus: "top100" },
-  { id: "review", label: "中文综述", desc: "基于摘要生成分点综述", keyword: "gut microbiome", focus: "review" },
-  { id: "cn", label: "中文检索", desc: "中文术语自动改写为英文检索（渐冻症 → ALS）", keyword: "渐冻症", focus: "all" },
-  { id: "design", label: "设计思考", desc: "技术选型与取舍留痕", keyword: "", focus: "all" },
-  { id: "topic", label: "选题助手", desc: "尚未实现，路线图占位", keyword: "", focus: "all", planned: true },
-  { id: "meta", label: "元分析流程", desc: "尚未实现，路线图占位", keyword: "", focus: "all", planned: true },
+export interface MainEntry {
+  id: "chat" | "report";
+  label: string;
+  desc: string;
+}
+
+export const MAIN_ENTRIES: MainEntry[] = [
+  {
+    id: "chat",
+    label: "智能对话",
+    desc: "提问即得全流程分析：检索 → 指标 → 统计 → 词云 → 影响力榜单 → 中文综述",
+  },
+  {
+    id: "report",
+    label: "智能报告",
+    desc: "完整形态：年份/分区/词云图表、Top100 表格与 CSV 导出、综述全文与全部出处",
+  },
+];
+
+/**
+ * 路线图占位：尚未实现，如实标注「规划中」而非虚标为可用功能。
+ * （参考产品有选题助手 / 元分析全流程，本项目未做。）
+ */
+export const ROADMAP: { id: string; label: string; desc: string }[] = [
+  { id: "topic", label: "选题助手", desc: "尚未实现，路线图占位" },
+  { id: "meta", label: "元分析流程", desc: "尚未实现，路线图占位" },
 ];
 
 /**
@@ -330,38 +363,205 @@ export function buildThinking(query: string, maxResults = DEFAULT_MAX_RESULTS): 
   ];
 }
 
-const LS_KEY = "pubmed-agent-sessions";
-const LS_MAX = 12;
+import { API_BASE } from "../apiBase";
 
-export function loadSessions(): Session[] {
+/** 会话线程数上限：前后端各挡一道（服务端追加时挤出最旧的线程） */
+export const MAX_SESSIONS = 12;
+
+/**
+ * 后端线程行（snake_case / ISO 时间）→ 前端 Session（ts 归一为毫秒数）。
+ * v2 线程模型：一个会话 = 一个对话线程，可含多轮问答（exchanges 为轮次数）。
+ */
+function normalizeSession(row: Record<string, unknown>): Session {
+  const rawTs = row.ts;
+  const ts = typeof rawTs === "number" ? rawTs : Date.parse(String(rawTs)) || Date.now();
+  const out: Session = {
+    id: String(row.id),
+    kind: row.kind === "report" ? "report" : "chat",
+    title: (row.title as string) ?? "",
+    ts,
+  };
+  if (typeof row.query === "string") out.query = row.query;
+  if (row.chat_id !== undefined) out.chatId = (row.chat_id as string | null) ?? null;
+  if (row.meta && typeof row.meta === "object") out.meta = row.meta as ReportMeta;
+  const ex = row.exchanges;
+  if (typeof ex === "number") out.exchanges = ex;
+  return out;
+}
+
+/** 侧栏列表：对话与报告混排（按更新时间倒序）；kind 可过滤。后端不可达返回空列表。 */
+export async function loadSessions(kind: "all" | "chat" | "report" = "all"): Promise<Session[]> {
   try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return [];
-    const list = JSON.parse(raw);
-    return Array.isArray(list) ? list.slice(0, LS_MAX) : [];
+    const r = await fetch(`${API_BASE}/api/sessions?kind=${kind}&limit=${MAX_SESSIONS}`, { credentials: "include" });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return Array.isArray(data.sessions) ? data.sessions.map(normalizeSession) : [];
   } catch {
     return [];
   }
 }
 
-export function saveSession(sessions: Session[], query: string): Session[] {
-  const exists = sessions.find((s) => s.query === query);
-  const next = exists
-    ? sessions
-    : [{ id: uid(), title: query, query, ts: Date.now() }, ...sessions].slice(0, LS_MAX);
+/**
+ * 检索成功后保存这一轮问答：sessionId 为空 = 新建线程（首问即标题）；
+ * 否则追加到该线程（同一线程连问不分家）。返回服务端归一后的轻量线程行
+ * 供调用方原地刷新列表 / 记住线程 id；失败返回 null——会话存不上不应打扰检索主流程。
+ */
+export async function saveExchange(
+  sessionId: string | null,
+  query: string,
+  result: AnalyzeResp,
+  elapsedMs?: number,
+  askText?: string,
+): Promise<Session | null> {
+  // 记录口径：**提问气泡存用户原话（ask）**，query 只是检索词——否则历史还原时
+  // 用户会看到自己的问题被换成了关键词（2026-09-19 用户实测反馈）。
+  // title 仅新建线程时生效，同样取用户原话。
+  const body = JSON.stringify({
+    kind: "chat",
+    query,
+    result,
+    elapsed_ms: elapsedMs ?? null,
+    ...(askText ? { ask: askText } : {}),
+    ...(askText && !sessionId ? { title: askText } : {}),
+  });
+  const url = sessionId ? `${API_BASE}/api/sessions/${sessionId}/messages` : `${API_BASE}/api/sessions`;
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(next));
+    const r = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    if (!r.ok) return null;
+    return normalizeSession(await r.json());
   } catch {
-    /* 隐私模式下 localStorage 不可用，忽略即可 */
+    return null;
   }
-  return next;
 }
 
-export function clearSessions(): Session[] {
+/** 报告摘要（侧栏列表直接显示，不必打开详情） */
+export function reportMetaOf(doc: AnalyzeResp, elapsedMs?: number): ReportMeta {
+  return {
+    total: doc.total,
+    returned: doc.returned,
+    review_chars: (doc.review?.text ?? "").length,
+    elapsed_ms: elapsedMs,
+  };
+}
+
+/**
+ * 新建/复用报告记录（**全量快照**，含 200 篇文献）。
+ * chatId 非空 = 从属报告（来自某条对话）；null = 独立报告（报告页直接搜索生成）。
+ * 服务端复用键 = (chatId, query)：重复点「生成报告」是更新而非新增，不堆重复。
+ */
+export async function saveReport(
+  query: string,
+  doc: AnalyzeResp,
+  meta: ReportMeta,
+  chatId: string | null,
+  title?: string,
+): Promise<Session | null> {
   try {
-    localStorage.removeItem(LS_KEY);
+    const r = await fetch(`${API_BASE}/api/sessions`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      // title = 用户原话（有则用）；否则退回检索词。报告页标题因此显示"你问的问题"而非关键词
+      body: JSON.stringify({ kind: "report", query, doc, meta, chat_id: chatId, ...(title ? { title } : {}) }),
+    });
+    if (!r.ok) return null;
+    return normalizeSession(await r.json());
   } catch {
-    /* 同上 */
+    return null;
+  }
+}
+
+/** 打开历史报告：取整份快照直接渲染（不依赖缓存、不发分析请求）。 */
+export async function fetchReport(id: string): Promise<{
+  id: string;
+  title: string;
+  query: string;
+  meta: ReportMeta;
+  doc: AnalyzeResp;
+  chatId: string | null;
+  savedAt: string;
+} | null> {
+  try {
+    const r = await fetch(`${API_BASE}/api/sessions/${id}`, { credentials: "include" });
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (d.kind !== "report" || !d.doc) return null;
+    return {
+      id: String(d.id),
+      title: String(d.title ?? ""),
+      query: String(d.query ?? d.doc?.query ?? ""),
+      meta: (d.meta ?? {}) as ReportMeta,
+      doc: d.doc as AnalyzeResp,
+      chatId: (d.chat_id as string | null) ?? null,
+      savedAt: String(d.ts ?? ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** 删除单条记录（对话或报告）。删对话时服务端只把其报告的 chat_id 置空，报告保留。 */
+export async function deleteSession(id: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${API_BASE}/api/sessions/${id}`, { method: "DELETE", credentials: "include" });
+    if (!r.ok) return false;
+    const d = await r.json();
+    return !!d.deleted;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 打开历史会话：拉整条线程并还原成消息数组（每轮 = 用户气泡 + 助手结果气泡）。
+ * 拿不到 / 线程为空返回 null，调用方退回重新检索。
+ */
+export async function fetchSessionMessages(id: string): Promise<ChatMessage[] | null> {
+  try {
+    const r = await fetch(`${API_BASE}/api/sessions/${id}`, { credentials: "include" });
+    if (!r.ok) return null;
+    const detail = await r.json();
+    const raw: { role: string; content?: { text?: string; result?: AnalyzeResp; elapsed_ms?: number } }[] =
+      Array.isArray(detail.messages) ? detail.messages : [];
+    const out: ChatMessage[] = [];
+    let lastQuery = "";
+    for (const m of raw) {
+      if (m.role === "user") {
+        lastQuery = m.content?.text ?? "";
+        out.push({ id: uid(), role: "user", text: lastQuery, ts: Date.now() });
+      } else if (m.role === "assistant" && m.content?.result) {
+        const result = m.content.result;
+        const query = result.query || lastQuery;
+        out.push({
+          id: uid(),
+          role: "assistant",
+          thinking: buildThinking(query, DEFAULT_MAX_RESULTS),
+          tools: fillToolResults(buildTools(query, DEFAULT_MAX_RESULTS), result),
+          result,
+          elapsedMs: typeof m.content.elapsed_ms === "number" ? m.content.elapsed_ms : undefined,
+          // 还原时带上同轮的用户原话，供「生成报告」用作标题（不改检索词）
+          askText: lastQuery || undefined,
+          ts: Date.now(),
+        });
+      }
+    }
+    return out.length > 0 ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 清空服务端全部历史会话线程；无论成败本地列表都清空（与旧行为观感一致）。 */
+export async function clearSessions(): Promise<Session[]> {
+  try {
+    await fetch(`${API_BASE}/api/sessions`, { method: "DELETE", credentials: "include" });
+  } catch {
+    /* 后端不可达也照常清空本地列表 */
   }
   return [];
 }

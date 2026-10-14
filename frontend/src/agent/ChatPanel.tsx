@@ -1,14 +1,13 @@
 /**
  * 对话视图：欢迎页 / 消息流 / 输入区，以及工具卡片的推进编排。
  *
- * 推进节奏的处理（这是本档「工具卡片回放」的核心）：
- * - 前 N-1 步按固定节奏点亮（保证演示时看得清）；
- * - 最后一步挂住等 /api/analyze 的真实响应，因此**真实链路慢的时候不会假装跑完**；
- * - 卡片上的结果值在响应到达后回填，全部取自真实 payload；
- * - 汇总行显示的是真实耗时（performance 计时），不是播放时长。
+ * 推进节奏（v2 SSE 流式）：
+ * - 主路径走 /api/analyze/stream：卡片由后端真实阶段事件点亮、综述逐字推送（reviewLive 打字机）；
+ * - 后端没有流式端点时自动退回一次性请求 + 固定节奏回放（runLegacy，兜底保可用）；
+ * - 卡片上的结果值全部取自真实响应/真实事件，汇总行是真实往返耗时（performance 计时）。
  */
 import { useEffect, useRef, useState } from "react";
-import { analyze, AnalyzeResp } from "../api";
+import { analyze, analyzeStream, AnalyzeResp } from "../api";
 import {
   buildThinking,
   buildTools,
@@ -19,39 +18,30 @@ import {
   Focus,
   MIN_REPLAY_MS,
   parseIntent,
-  QUICK_STARTS,
   sleep,
   uid,
-  type QuickStart,
+  type ToolCall,
+  type ToolStatus,
 } from "./model";
 import ToolCard from "./ToolCard";
-import { Icon } from "./Sidebar";
 
 interface Props {
   draft: string;
   setDraft: (v: string) => void;
-  /** 结果聚焦维度，由快捷开始入口决定 */
+  /** 结果聚焦维度（当前恒为 all：六个「快捷开始」入口已移除，聚焦切片不再由入口决定） */
   focus: Focus;
   /** 当前意图标签，显示在输入区上方 */
   intentLabel: string;
   /** 非空时自动执行一次检索；n 递增用于区分相同 query 的重复请求 */
   runRequest: { q: string; n: number } | null;
+  /** 非空时整条还原历史线程消息（不重新检索、不播动画）；n 与 runRequest 共用递增序列 */
+  restoreRequest: { messages: ChatMessage[]; n: number } | null;
   /** 递增即清空当前对话 */
   resetToken: number;
   mockMode: boolean | null;
-  /** 最近一次由「快捷开始」填入的预设词；非空时在输入区给出明确提示 */
-  filledFrom: string;
-  /** 输入框已有内容时被挂起的快捷开始项，等用户确认是否替换 */
-  pendingSwap: { keyword: string; label: string } | null;
-  onAcceptSwap: () => void;
-  onDismissSwap: () => void;
-  onResult: (r: AnalyzeResp) => void;
-  onOpenReport: (query: string) => void;
-  /** 欢迎页能力卡点击，与左侧「快捷开始」走同一条路径 */
-  onPick: (q: QuickStart) => void;
+  onResult: (r: AnalyzeResp, elapsedMs?: number, askText?: string) => void;
+  onGenerateReport: (doc: AnalyzeResp, elapsedMs?: number, askText?: string) => void;
 }
-
-const CAP_CARDS = ["review", "stats", "cloud", "top100", "search", "design"];
 
 export default function ChatPanel({
   draft,
@@ -59,15 +49,11 @@ export default function ChatPanel({
   focus,
   intentLabel,
   runRequest,
+  restoreRequest,
   resetToken,
   mockMode,
-  filledFrom,
-  pendingSwap,
-  onAcceptSwap,
-  onDismissSwap,
   onResult,
-  onOpenReport,
-  onPick,
+  onGenerateReport,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
@@ -86,14 +72,26 @@ export default function ChatPanel({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  // 外部触发的检索（历史会话回放 / 深链）
+  // 外部触发的检索（侧栏历史回退 / 深链）：先清空当前消息流——
+  // 打开某个会话就只看这个会话，不同会话之间互相隔离，也不和手头正聊的内容糊在一起
   useEffect(() => {
     if (runRequest && runRequest.n !== lastRun.current) {
       lastRun.current = runRequest.n;
+      setMessages([]);
       void runAgent(runRequest.q);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runRequest]);
+
+  // 外部触发的会话回放：整条线程消息一次性还原，不转圈
+  const lastRestore = useRef(-1);
+  useEffect(() => {
+    if (restoreRequest && restoreRequest.n !== lastRestore.current) {
+      lastRestore.current = restoreRequest.n;
+      restoreSession(restoreRequest.messages);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreRequest]);
 
   // 外部触发的清空（新对话）
   useEffect(() => {
@@ -139,51 +137,166 @@ export default function ChatPanel({
       thinking: buildThinking(query, DEFAULT_MAX_RESULTS),
       tools,
       topN: intent.topN,
+      askText: intent.raw,
       ts: Date.now(),
     };
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setBusy(true);
     busyRef.current = true;
 
-    const box: { data: AnalyzeResp | null; err: string; ms: number } = { data: null, err: "", ms: 0 };
+    /** 用户原话：检索用的是提取后的关键词，但保存标题/生成报告要用原话 */
+    const askText = intent.raw;
+
     const t0 = performance.now();
-    const req = analyze(query, DEFAULT_MAX_RESULTS)
-      .then((r) => {
-        box.ms = performance.now() - t0;
-        if (r.error) box.err = r.error;
-        else box.data = r;
-      })
-      .catch((e: unknown) => {
-        box.ms = performance.now() - t0;
-        box.err = e instanceof Error ? e.message : "请求失败";
-      });
 
-    const stepMs = Math.max(300, Math.round(MIN_REPLAY_MS / tools.length));
-    for (let i = 0; i < tools.length; i += 1) {
-      patchTool(assistantId, i, "running", box.data);
-      await sleep(stepMs);
-      if (i < tools.length - 1) {
-        patchTool(assistantId, i, "done", box.data);
-      } else {
-        // 最后一步必须等真实响应，避免「链路还没跑完就显示完成」
-        await req;
-        patchTool(assistantId, i, box.err ? "error" : "done", box.data);
-      }
-    }
+    /** 单张卡片打补丁：状态 + 可选的实时结果/耗时（来自后端真实阶段事件） */
+    const setCard = (idx: number, status: ToolStatus, patch?: Partial<ToolCall>) => {
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== assistantId || !m.tools) return m;
+          const tl = m.tools.slice();
+          tl[idx] = { ...tl[idx], status, ...patch };
+          return { ...m, tools: tl };
+        }),
+      );
+    };
 
-    // 这里记录的是「接口真实往返耗时」，不含工具卡片的播放时长（避免把动画时长说成链路耗时）
-    const elapsedMs = Math.round(box.ms);
-    setMessages((prev) =>
-      prev.map((m) => {
-        if (m.id !== assistantId) return m;
-        if (box.err) return { ...m, error: box.err, elapsedMs };
-        if (!box.data) return m;
-        return { ...m, tools: fillToolResults(m.tools ?? [], box.data), result: box.data, elapsedMs };
-      }),
-    );
-    setBusy(false);
-    busyRef.current = false;
-    if (box.data) onResult(box.data);
+    // 流水线阶段 → 工具卡映射：rewrite→卡0；search（esearch+efetch 合并段）→卡0+1；
+    // stats→卡2+3；review→卡4。litlog 无对应卡片，忽略。
+    const STAGE_CARDS: Record<string, number[]> = { rewrite: [0], search: [0, 1], stats: [2, 3], review: [4] };
+    let gotEvent = false;
+
+    const finish = (payload: AnalyzeResp) => {
+      // 真实往返耗时（performance 计时），不含任何动画时长
+      const elapsedMs = Math.round(performance.now() - t0);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? {
+                ...m,
+                tools: fillToolResults(m.tools ?? [], payload),
+                result: payload,
+                elapsedMs,
+                reviewLive: undefined, // 全量结果到达，流式预览交棒给 result.review
+              }
+            : m,
+        ),
+      );
+      setBusy(false);
+      busyRef.current = false;
+      onResult(payload, elapsedMs, askText);
+    };
+
+    const fail = (msg: string) => {
+      setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, error: msg } : m)));
+      setBusy(false);
+      busyRef.current = false;
+    };
+
+    /** 兜底：后端没有流式端点（未重启到新版本）时，退回一次性请求 + 固定节奏回放 */
+    const runLegacy = () => {
+      const box: { data: AnalyzeResp | null; err: string; ms: number } = { data: null, err: "", ms: 0 };
+      const req = analyze(query, DEFAULT_MAX_RESULTS)
+        .then((r) => {
+          box.ms = performance.now() - t0;
+          if (r.error) box.err = r.error;
+          else box.data = r;
+        })
+        .catch((e: unknown) => {
+          box.ms = performance.now() - t0;
+          box.err = e instanceof Error ? e.message : "请求失败";
+        });
+
+      const stepMs = Math.max(300, Math.round(MIN_REPLAY_MS / tools.length));
+      void (async () => {
+        for (let i = 0; i < tools.length; i += 1) {
+          patchTool(assistantId, i, "running", box.data);
+          await sleep(stepMs);
+          if (i < tools.length - 1) {
+            patchTool(assistantId, i, "done", box.data);
+          } else {
+            // 最后一步必须等真实响应，避免「链路还没跑完就显示完成」
+            await req;
+            patchTool(assistantId, i, box.err ? "error" : "done", box.data);
+          }
+        }
+        const elapsedMs = Math.round(box.ms);
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== assistantId) return m;
+            if (box.err) return { ...m, error: box.err, elapsedMs };
+            if (!box.data) return m;
+            return { ...m, tools: fillToolResults(m.tools ?? [], box.data), result: box.data, elapsedMs };
+          }),
+        );
+        setBusy(false);
+        busyRef.current = false;
+        if (box.data) onResult(box.data, elapsedMs, askText);
+      })();
+    };
+
+    // 主路径：SSE 流式——卡片按后端真实阶段点亮、综述逐字推送，不再用假回放
+    analyzeStream(query, DEFAULT_MAX_RESULTS, {
+      onStage: (e) => {
+        gotEvent = true;
+        const map = STAGE_CARDS[e.key ?? ""];
+        if (!map) return;
+        const status: ToolStatus =
+          e.status === "running" ? "running" : e.status === "error" ? "error" : "done";
+        for (const idx of map) {
+          setCard(idx, status, { ms: e.ms, ...(e.detail ? { result: e.detail } : {}) });
+        }
+      },
+      onReviewDelta: (text) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantId ? { ...m, reviewLive: (m.reviewLive ?? "") + text } : m,
+          ),
+        );
+      },
+      // done 之后补发的词云/主题词中文译名：原地注入当前这条结果，界面即时切中文
+      onWordZh: (map) => {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== assistantId || !m.result) return m;
+            const st = m.result.stats;
+            return {
+              ...m,
+              result: {
+                ...m.result,
+                stats: {
+                  ...st,
+                  wordcloud: (st.wordcloud ?? []).map((w) =>
+                    map[w.word] ? { ...w, zh: map[w.word] } : w,
+                  ),
+                  topics: (st.topics ?? []).map((t) =>
+                    map[t.topic] ? { ...t, zh: map[t.topic] } : t,
+                  ),
+                },
+              },
+            };
+          }),
+        );
+      },
+      onDone: finish,
+      onError: (msg) => {
+        if (!gotEvent) {
+          // 一个事件都没收到：大概率是后端还没重启到带 /stream 的版本，退回旧链路保可用
+          runLegacy();
+          return;
+        }
+        fail(msg);
+      },
+    });
+  }
+
+  /**
+   * 历史线程回放：服务端已按轮次组装好完整消息（用户气泡 + 结果气泡），
+   * 这里整体替换当前消息流——打开哪个线程就只看哪个线程（会话隔离），点多少次都一份。
+   */
+  function restoreSession(threadMessages: ChatMessage[]) {
+    if (busyRef.current) return; // 正在跑真实检索时不打扰，避免消息流错乱
+    setMessages(threadMessages);
   }
 
   const empty = messages.length === 0;
@@ -192,7 +305,7 @@ export default function ChatPanel({
     <div className="flex min-h-0 flex-1 flex-col">
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         {empty ? (
-          <Welcome onPick={onPick} />
+          <Welcome />
         ) : (
           <div className="mx-auto w-full max-w-3xl space-y-5 px-6 py-6">
             {messages.map((m) =>
@@ -208,7 +321,7 @@ export default function ChatPanel({
                   msg={m}
                   active={busy && m.id === messages[messages.length - 1]?.id}
                   focus={focus}
-                  onOpenReport={onOpenReport}
+                  onGenerateReport={onGenerateReport}
                   onRetry={(q) => void runAgent(q)}
                 />
               ),
@@ -234,26 +347,6 @@ export default function ChatPanel({
             )}
           </div>
 
-          {pendingSwap && draft.trim() && (
-            <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-brand/30 bg-brand/5 px-3 py-2 text-[11px]">
-              <span className="text-ink">输入框里已有你的内容，我没有替换。</span>
-              <button
-                type="button"
-                onClick={onAcceptSwap}
-                className="rounded border border-brand px-2 py-0.5 text-brand transition-colors hover:bg-brand/10"
-              >
-                替换为「{pendingSwap.label} · {pendingSwap.keyword}」
-              </button>
-              <button
-                type="button"
-                onClick={onDismissSwap}
-                className="rounded px-2 py-0.5 text-muted transition-colors hover:bg-appbg"
-              >
-                保留我的
-              </button>
-            </div>
-          )}
-
           <div className="flex items-end gap-2">
             <textarea
               ref={inputRef}
@@ -266,7 +359,7 @@ export default function ChatPanel({
                   void runAgent(draft);
                 }
               }}
-              placeholder="向 PubMed Agent 提问，或点左侧快捷开始预填关键词，回车发送…"
+              placeholder="输入一个医学关键词，回车开始全流程分析（例：老年痴呆、高血压）…"
               className="max-h-40 min-h-[42px] flex-1 resize-none rounded-lg border border-line bg-white px-4 py-3 text-sm leading-6 outline-none transition-all focus:border-brand focus:ring-2 focus:ring-brand/15"
             />
             <button
@@ -279,16 +372,8 @@ export default function ChatPanel({
             </button>
           </div>
           <div className="pt-1.5 text-[11px] leading-5 text-muted">
-            {filledFrom ? (
-              <span className="text-brand">
-                已填入预设词「{filledFrom}」· 按 Enter 或点「发送」开始分析
-              </span>
-            ) : (
-              <>
-                Enter 发送 · Shift+Enter 换行 · 检索与统计走 NCBI E-utilities
-                与本地期刊指标库，结果可溯源到 PMID
-              </>
-            )}
+            Enter 发送 · Shift+Enter 换行 · 检索与统计走 NCBI E-utilities
+            与本地期刊指标库，结果可溯源到 PMID；图表 / Top100 表格 / CSV 导出 / 综述全文在「智能报告」
           </div>
         </div>
       </div>
@@ -296,10 +381,12 @@ export default function ChatPanel({
   );
 }
 
-function Welcome({ onPick }: { onPick: (q: QuickStart) => void }) {
-  const cards = CAP_CARDS.map((id) => QUICK_STARTS.find((q) => q.id === id)).filter(
-    (q): q is QuickStart => !!q,
-  );
+/**
+ * 空态欢迎页。原先六张「能力卡」（文献检索/统计概览/词云与趋势/影响力 Top100/中文综述/中文检索）
+ * 已移除：它们与正常提问的产出 100% 重叠，只是把预设词填进输入框（见 model.ts 的入口收敛说明）。
+ * 空态现在只给一句引导 + 去哪看完整形态，不摆功能入口的架子。
+ */
+function Welcome() {
   return (
     <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center px-6 py-10">
       <div className="text-center">
@@ -313,25 +400,11 @@ function Welcome({ onPick }: { onPick: (q: QuickStart) => void }) {
         <p className="mt-2 text-sm leading-6 text-muted">
           输入一个关键词，我会跑完「检索 → 指标 → 统计 → 可视化 → 中文综述」整条链路
         </p>
-      </div>
-
-      <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {cards.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => onPick(c)}
-            className="rounded-lg border border-line bg-white p-4 text-left shadow-card transition-all hover:-translate-y-px hover:border-brand hover:shadow-lift"
-          >
-            <div className="flex items-center gap-2">
-              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-brand/10 text-brand">
-                <Icon name={c.id} />
-              </span>
-              <span className="text-[13px] font-medium text-ink">{c.label}</span>
-            </div>
-            <div className="mt-2 text-[11px] leading-5 text-muted">{c.desc}</div>
-          </button>
-        ))}
+        <p className="mt-4 text-[12px] leading-6 text-muted">
+          例：老年痴呆 / 高血压 / 白血病 —— 中文词会自动改写成英文检索词并如实标注
+          <br />
+          想要年份与分区分布图、Top100 完整表格与 CSV 导出、综述全文？切到「智能报告」
+        </p>
       </div>
     </div>
   );
@@ -341,13 +414,13 @@ function AssistantBubble({
   msg,
   active,
   focus,
-  onOpenReport,
+  onGenerateReport,
   onRetry,
 }: {
   msg: ChatMessage;
   active: boolean;
   focus: Focus;
-  onOpenReport: (q: string) => void;
+  onGenerateReport: (doc: AnalyzeResp, elapsedMs?: number, askText?: string) => void;
   onRetry: (q: string) => void;
 }) {
   const [manual, setManual] = useState<boolean | null>(null);
@@ -390,6 +463,17 @@ function AssistantBubble({
           ))}
         </div>}
 
+        {/* SSE 流式生成中的综述预览：done 到达后由 result.review 接管，这里即消失 */}
+        {msg.reviewLive != null && !msg.result && (
+          <div className="rounded-md border border-line bg-white p-3">
+            <div className="text-[11px] font-medium text-muted">中文综述 · 流式生成中</div>
+            <div className="mt-1.5 whitespace-pre-wrap text-[12px] leading-6 text-ink">
+              {msg.reviewLive}
+              <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-brand align-middle" aria-hidden="true" />
+            </div>
+          </div>
+        )}
+
         {msg.error && (
           <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
             执行失败：{msg.error}
@@ -403,7 +487,8 @@ function AssistantBubble({
             focus={focus}
             elapsedMs={msg.elapsedMs}
             topN={msg.topN}
-            onOpenReport={onOpenReport}
+            askText={msg.askText}
+            onGenerateReport={onGenerateReport}
             onRetry={onRetry}
           />
         )}
@@ -417,7 +502,8 @@ function ResultBlock({
   focus,
   elapsedMs,
   topN = DEFAULT_TOP_N,
-  onOpenReport,
+  askText,
+  onGenerateReport,
   onRetry,
 }: {
   result: AnalyzeResp;
@@ -425,7 +511,9 @@ function ResultBlock({
   elapsedMs?: number;
   /** 内联榜单展示条数，来自本次输入的解析结果 */
   topN?: number;
-  onOpenReport: (q: string) => void;
+  /** 用户原话：生成报告时作为标题（检索词仍用关键词） */
+  askText?: string;
+  onGenerateReport: (doc: AnalyzeResp, elapsedMs?: number, askText?: string) => void;
   /** 0 命中引导：点击候选词重新发起检索 */
   onRetry: (q: string) => void;
 }) {
@@ -451,15 +539,27 @@ function ResultBlock({
 
   const cloudBlock = (
     <div key="cloud" className="rounded-md border border-line bg-white p-3">
-      <div className="text-[11px] font-medium text-muted">研究方向（按 MeSH 词频聚类，未调用大模型）</div>
+      <div className="text-[11px] font-medium text-muted">
+        研究方向（按 MeSH 词频聚类，未调用大模型）
+      </div>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {(result.stats.topics ?? []).slice(0, 8).map((t) => (
-          <span key={t.topic} className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-[11px] text-brand">
-            {t.topic} <span className="text-brand/60">×{t.count}</span>
+          <span
+            key={t.topic}
+            title={`${t.topic} · 出现 ${t.count} 次`}
+            className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-[11px] text-brand"
+          >
+            {t.zh ?? t.topic} <span className="text-brand/60">×{t.count}</span>
           </span>
         ))}
         {(result.stats.topics ?? []).length === 0 && <span className="text-[11px] text-muted">暂无足够 MeSH 数据</span>}
       </div>
+      {/* 诚实性：只有真的拿到译名才提「中文为翻译辅助」；没有中文时不说这话 */}
+      {(result.stats.topics ?? []).some((t) => t.zh) && (
+        <div className="mt-1.5 text-[10px] leading-4 text-muted">
+          词条为 PubMed 官方 MeSH 主题词（英文受控词），中文为翻译辅助；悬停可看英文原词。完整词云见「智能报告」。
+        </div>
+      )}
     </div>
   );
 
@@ -470,7 +570,7 @@ function ResultBlock({
           影响力 Top {shownTopN}（共 {topList.length} 条）
           {topNShort && <span className="ml-1 text-muted">· 你想看 {topN} 条，本次数据只够 {topList.length} 条</span>}
         </span>
-        <button type="button" onClick={() => onOpenReport(result.query)} className="text-[11px] text-brand hover:underline">
+        <button type="button" onClick={() => onGenerateReport(result, elapsedMs, askText)} className="text-[11px] text-brand hover:underline">
           查看完整报告
         </button>
       </div>
@@ -506,8 +606,8 @@ function ResultBlock({
             {expandReview ? "收起" : "展开全文"}
           </button>
         )}
-        <button type="button" onClick={() => onOpenReport(result.query)} className="text-[11px] text-muted hover:text-brand">
-          含全部出处 →
+        <button type="button" onClick={() => onGenerateReport(result, elapsedMs, askText)} className="text-[11px] text-muted hover:text-brand">
+          生成报告
         </button>
       </div>
     </div>
@@ -577,7 +677,7 @@ function ResultBlock({
           「统计概览」只展示统计类结果 · 完整榜单与中文综述见{" "}
           <button
             type="button"
-            onClick={() => onOpenReport(result.query)}
+            onClick={() => onGenerateReport(result, elapsedMs, askText)}
             className="text-brand hover:underline"
           >
             报告页

@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 
 interface Props {
-  data: { word: string; count: number }[];
+  /** 词频数据；zh 为后端补译的中文译名（缺失时回退显示英文原词） */
+  data: { word: string; count: number; zh?: string }[];
   height?: number;
   max?: number;
 }
@@ -34,10 +35,11 @@ export default function WordCloud({ data, height = 340, max = 36 }: Props) {
       const tier = Math.min(PALETTE.length - 1, Math.floor((1 - t) * PALETTE.length));
       return {
         word: d.word,
+        zh: d.zh, // 中文译名（可能缺失）
         count: d.count,
         size,
         color: PALETTE[tier],
-        weight: t > 0.6 ? 700 : t > 0.3 ? 600 : 500,
+        weight: t > 0.7 ? 700 : t > 0.4 ? 600 : 500,
       };
     });
   }, [data, max]);
@@ -54,7 +56,7 @@ export default function WordCloud({ data, height = 340, max = 36 }: Props) {
     <div
       className="flex flex-wrap items-center justify-center content-center overflow-hidden px-3"
       style={{ height, gap: "6px 14px" }}
-      title="字号与颜色深浅代表关键词在标题/摘要/MeSH 中的出现频次"
+      title="字号与颜色深浅代表关键词在标题/摘要/MeSH 中的出现频次；显示中文译名，悬停可看英文原词"
     >
       {items.map((it) => (
         <span
@@ -64,11 +66,13 @@ export default function WordCloud({ data, height = 340, max = 36 }: Props) {
             fontSize: it.size,
             lineHeight: 1.05,
             color: it.color,
-            fontWeight: it.weight,
+            // 中文比英文"占宽"更小，同字号下视觉偏轻；按有无译名微调字重
+            fontWeight: it.zh ? Math.min(900, it.weight + 100) : it.weight,
           }}
-          title={`${it.word}：出现 ${it.count} 次`}
+          // 中文为主、英文原词保留在悬停里（可溯源：统计与检索都基于英文语料）
+          title={it.zh ? `${it.zh}（${it.word}）· 出现 ${it.count} 次` : `${it.word} · 出现 ${it.count} 次`}
         >
-          {it.word}
+          {it.zh ?? it.word}
         </span>
       ))}
     </div>
