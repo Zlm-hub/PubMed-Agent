@@ -401,17 +401,23 @@ ls -la deploy/backups/                     # 选一份备份
 tar xzf deploy/backups/pa-backup-<时间戳>.tar.gz -C /tmp/pa-restore
 
 sudo docker compose -f deploy/docker-compose.yml stop app     # ① 停容器（避免写坏库）
-cp /tmp/pa-restore/data__users.db        deploy/data/users.db        # ② 按需还原
-cp /tmp/pa-restore/data__sessions.db     deploy/data/sessions.db
-cp /tmp/pa-restore/data__literature.db   deploy/data/literature.db
-cp /tmp/pa-restore/data__journal_metrics.db deploy/data/journal_metrics.db
+cp /tmp/pa-restore/deploy__data__users.db        deploy/data/users.db        # ② 按需还原
+cp /tmp/pa-restore/deploy__data__sessions.db     deploy/data/sessions.db
+cp /tmp/pa-restore/deploy__data__literature.db   deploy/data/literature.db
+cp /tmp/pa-restore/deploy__data__journal_metrics.db deploy/data/journal_metrics.db
 rm -f deploy/data/*.db-wal deploy/data/*.db-shm               # ③ 清掉 WAL/SHM 残片
 sudo docker compose -f deploy/docker-compose.yml up -d --no-build   # ④ 起容器
 curl -s 'http://127.0.0.1:8000/api/health?deep=1'             # ⑤ 深检：库真的打开了
 ```
 
-> 备份包里的文件名是 `<目录>__<库名>.db`（例如 `data__users.db`），前缀是为了区分
-> `deploy/data` 与 `backend/data` 两处同名库，恢复时按需改回 `<库名>.db` 放到 `deploy/data/`。
+> 备份包里的文件名 = **完整相对路径拍平**（例如 `deploy__data__users.db`），
+> 恢复时改回 `<库名>.db` 放回原目录即可。脚本会**按优先级只备份一处**数据目录：
+> 部署形态用 `deploy/data`（容器实际读写的挂载卷），本机开发回落到 `backend/data`
+> —— 两处存在同名库，都备会撞名且白占体积（服务器上实测踩过）。
+>
+> 另外：脚本把副本的 `journal_mode` 切回 DELETE 并要求 `integrity_check` 通过，
+> 所以归档里不会出现 `-wal`/`-shm` 伴生文件；任何一步失败都会**删除半截归档**并以
+> 非零退出码结束，避免"看起来有备份、其实不能用"。
 
 **边界**：只做本机快照 + 轮转，**不含异地容灾**；请把 `--out` 指到另一块盘或远端挂载点，
 并监控 `deploy/logs/backup.log` 与脚本退出码。

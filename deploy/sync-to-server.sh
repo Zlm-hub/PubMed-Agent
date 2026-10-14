@@ -25,6 +25,16 @@ cd "$(dirname "$0")/.."
 echo "==> 本地仓库: $(pwd)"
 echo "==> 目标服务器: $DEPLOY_HOST:$DEPLOY_DIR"
 
+# 预检（2026-10-14 踩过）：Windows 上编辑脚本极易把 CRLF 写进文件，而服务器用 dash——
+# `set -e\r` 会直接报 `Illegal option -`，报错行号看着像第 9 行、极有迷惑性，整个部署中断。
+# 这里在打包前把 deploy/*.sh 归一成 LF，从根上避免这类失败复发。
+for f in deploy/*.sh; do
+  [ -f "$f" ] || continue
+  if grep -qU $'\r' "$f" 2>/dev/null; then
+    sed -i 's/\r$//' "$f" && echo "    （已修正 CRLF → LF: $f）"
+  fi
+done
+
 # 前端改了要先构建；没改可设 SKIP_BUILD=1 跳过
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
   echo "==> 构建前端（生产：API 基址同源）"

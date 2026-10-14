@@ -29,19 +29,32 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-# 需要备份的库：容器里都落在挂载卷 deploy/data/；本机开发另有 backend/data/
-CANDIDATE_DIRS = ("deploy/data", "backend/data")
-# 随库一起备份的小文件（可重生的指标快照与元数据，带上省得重建）
-EXTRA_FILES = ("deploy/data/journal_metrics.json", "backend/data/journal_metrics.json")
+# 备份目标目录，按优先级：部署形态下容器实际读写的是 deploy/data（挂载卷），
+# 本机开发才用 backend/data。**两者存在同名库，不能都备**——既会撞名，也是白占体积
+# （2026-10-14 在服务器上实测：两份 journal_metrics.db 打进了同一个归档条目）。
+DATA_DIRS = ("deploy/data", "backend/data")
 
 
-def find_dbs() -> list[pathlib.Path]:
-    out: list[pathlib.Path] = []
-    for d in CANDIDATE_DIRS:
-        for p in sorted((ROOT / d).glob("*.db")):
-            if p not in out:
-                out.append(p)
-    return out
+def collect() -> tuple[list[pathlib.Path], list[pathlib.Path]]:
+    """按优先级选一个数据目录，返回 (数据库列表, 附带的小文件列表)。"""
+    for rel in DATA_DIRS:
+        d = ROOT / rel
+        if not d.is_dir():
+            continue
+        dbs = sorted(d.glob("*.db"))
+        if not dbs:
+            continue
+        extras = [p for p in (d / "journal_metrics.json",) if p.exists()]
+        return dbs, extras
+    return [], []
+
+
+def staged_name(p: pathlib.Path) -> str:
+    """归档内的文件名 = 完整相对路径拍平（`deploy__data__users.db`）。
+
+    带目录前缀是为了「恢复时一眼知道该放回哪儿」，也避免不同目录同名库互相覆盖。
+    """
+    return str(p.relative_to(ROOT)).replace("\\", "__").replace("/", "__")
 
 
 def backup_one(src: pathlib.Path, dest: pathlib.Path) -> tuple[bool, str]:
@@ -50,7 +63,12 @@ def backup_one(src: pathlib.Path, dest: pathlib.Path) -> tuple[bool, str]:
         with sqlite3.connect(f"file:{src}?mode=ro", uri=True) as s:
             with sqlite3.connect(dest) as d:
                 s.backup(d)  # 在线备份 API：不需要停服，也不用拷 WAL
+        # 副本切回 DELETE 日志模式：源库是 WAL，副本会继承 WAL 语义并生成 -wal/-shm
+        # 伴生文件（2026-10-14 在服务器上实测踩到：归档时那对文件已被 SQLite 删掉 →
+        # FileNotFoundError，还留下半截归档）。切回 DELETE 后副本自包含、恢复更简单。
+        # 顺带在同一个连接里做完整性校验（避免开只读连接又触发 sidecar）。
         with sqlite3.connect(dest) as d:
+            d.execute("PRAGMA journal_mode=DELETE")
             row = d.execute("PRAGMA integrity_check").fetchone()
         if not row or row[0] != "ok":
             return False, f"integrity_check 未通过：{row}"
@@ -79,10 +97,11 @@ def main() -> int:
     ap.add_argument("--keep", type=int, default=7, help="保留份数（0 = 不轮转）")
     args = ap.parse_args()
 
-    dbs = find_dbs()
+    dbs, extras = collect()
     if not dbs:
-        print("!! 没找到任何 .db —— 检查 deploy/data 与 backend/data 是否存在", file=sys.stderr)
+        print(f"!! 没找到任何 .db —— 检查 {' 与 '.join(DATA_DIRS)} 是否存在", file=sys.stderr)
         return 2
+    used_dir = dbs[0].parent.relative_to(ROOT)
 
     out_dir = pathlib.Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -90,25 +109,48 @@ def main() -> int:
     archive = out_dir / f"pa-backup-{stamp}.tar.gz"
 
     failed = 0
+    staged: list[pathlib.Path] = []
     # ignore_cleanup_errors：Windows 上磁盘文件句柄释放略滞后，清理临时目录可能报
     # PermissionError —— 备份已经完成，不该因此让脚本以异常退出（Linux 上无此问题）。
     with tempfile.TemporaryDirectory(prefix="pa-backup-", ignore_cleanup_errors=True) as tmp:
         stage = pathlib.Path(tmp)
+        print(f"==> 数据目录：{used_dir}（另一处同名目录按优先级跳过，避免撞名与重复体积）")
         print(f"==> 备份 {len(dbs)} 个库 → {archive}")
         for db in dbs:
-            dest = stage / f"{db.parent.name}__{db.name}"
+            dest = stage / staged_name(db)
             ok, note = backup_one(db, dest)
             flag = "OK  " if ok else "FAIL"
             print(f"    [{flag}] {db.relative_to(ROOT)}  {note}")
             failed += 0 if ok else 1
-        for extra in EXTRA_FILES:
-            p = ROOT / extra
-            if p.exists():
-                shutil.copy2(p, stage / f"{p.parent.name}__{p.name}")
-                print(f"    [OK  ] {extra}  {p.stat().st_size / 1024:.0f} KB")
-        with tarfile.open(archive, "w:gz") as tar:
-            for f in sorted(stage.iterdir()):
-                tar.add(f, arcname=f.name)
+            if ok:
+                staged.append(dest)
+        for extra in extras:
+            dest = stage / staged_name(extra)
+            shutil.copy2(extra, dest)
+            staged.append(dest)
+            print(f"    [OK  ] {extra.relative_to(ROOT)}  {extra.stat().st_size / 1024:.0f} KB")
+
+        if failed:
+            # 有库没备成功就**不生成归档**：一份"少了个库"的备份比没有备份更危险，
+            # 因为恢复时才发现缺失已经太晚。直接以非零退出码让 cron / 监控报警。
+            print(f"!! 有 {failed} 个库备份失败，已放弃本次归档（不做半截备份）", file=sys.stderr)
+            return 1
+
+        # 只归档**明确收集到的**文件（不要 iterdir 后逐个 add：目录内容随时可能被
+        # SQLite 增删，列目录与打包之间会打架 —— 服务器实测踩到的 FileNotFoundError）
+        try:
+            with tarfile.open(archive, "w:gz") as tar:
+                for f in staged:
+                    tar.add(f, arcname=f.name)
+        except Exception as e:  # noqa: BLE001
+            # 打包中途失败会留下**半截归档**——比没有更坏（看起来像有备份）。
+            # 立刻删掉并以非零退出，让 cron / 监控看见。
+            try:
+                archive.unlink(missing_ok=True)
+            except OSError:
+                pass
+            print(f"!! 归档失败（已删除半截文件）：{type(e).__name__}: {e}", file=sys.stderr)
+            return 1
 
     removed = rotate(out_dir, args.keep)
     if removed:
