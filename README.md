@@ -1,7 +1,7 @@
 # PubMed Agent · 文献分析 Demo
 
 > 关键词 → NCBI 检索 → 统计 + 词云 + 影响力排序 + 中文综述 一站式 web。
-> 当前状态：**F1–F4 + 对话式外壳 + 用户体系 + 监控日志 + 单端口部署 全部完成**并端到端跑通；架构为**单 LLM**（非 RAG、非多智能体）；指标/文献/会话/账号落 **四个 SQLite 库**（按生命周期分库，见「存储结构」）；**支持中文检索**（本地术语映射 + LLM 改写，渐冻症 → ALS 实测全链路打通）；线上以**单容器单端口**提供服务，按账号登录、每账号免费试用 N 次（管理员可在后台重置）。
+> 当前状态：**F1–F4 + 对话式外壳 + 用户体系 + 访问防护 + 监控日志 + 备份 + CI + 单端口部署 全部完成**并端到端跑通；架构为**单 LLM**（非 RAG、非多智能体）；指标/文献/会话/账号落 **四个 SQLite 库**（按生命周期分库，见「存储结构」）；**支持中文检索**（本地术语映射 + LLM 改写，渐冻症 → ALS 实测全链路打通）；线上以**单容器单端口**提供服务，按账号登录、每账号免费试用 N 次（管理员可在后台重置）。
 > 外层是对话式 Agent 外壳（左导航 + 对话流 + 工具调用可见），内核仍是那条已端到端验证过的固定流水线——**升级只加了一层壳，报告链路一行未改**。
 
 ## 界面预览
@@ -99,24 +99,23 @@ pubmed-analytics/
 │   │   ├── ToolCard.tsx   # 工具调用卡片（入参可展开）
 │   │   └── model.ts       # 数据模型 + 快捷开始定义 + 工具模板 + 会话持久化
 │   └── dist/              # 已 build（596 模块 / gzip 237 KB）
-├── deploy/                # 部署包：Dockerfile(.prebuilt) / compose / entrypoint / 同步脚本 / nginx 样例
-├── docs/                  # 界面截图 + 交付文档 6 份 docx + 2 份专项设计 md
+├── deploy/                # 部署包：Dockerfile(.prebuilt) / compose / entrypoint / 同步脚本 / 备份脚本 / nginx 样例
+├── docs/                  # 界面截图（README 引用）+ 两份专项设计说明（md）
+├── .github/workflows/     # CI：离线回归 129 项 + 前端构建（push / PR 自动跑）
 ├── .gitignore             # 排除密钥与运行期数据（.env / auth_secret.key / *.db / deploy 运行期卷）
 └── .dockerignore          # 构建上下文瘦身（node_modules / .venv / 运行期数据）
 ```
 
-## 交付文档
+## 设计说明与截图
 
-除代码外，五份说明文档随仓库一并提供，位于 `docs/`（与界面截图同目录）：
-
-| 文档 | 说明 |
+| 资料 | 内容 |
 |---|---|
-| `docs/需求评审报告.docx` | 逐字引用需求原文，识别 3 处硬卡点（IF/分区数据源、LLM 综述、PubMed 限流）与 8 个待拍板问题 |
-| `docs/竞品调查报告.docx` | 5 款代表性竞品对比（Elicit / Connected Papers / ResearchRabbit / Scholarscope·EasyPubMed / VOSviewer），提炼差异化切入 |
-| `docs/开发实施文档.docx` | 架构、模块、接口、实现细节、「规划 vs 实装」差异对照（16 节）+ **v1.1 增补：账号体系 / 试用额度 / 日志 / 部署形态（17 节）** |
-| `docs/数据库设计文档.docx` | 数据分层、指标数据集结构、缓存与索引策略（12 节）+ **v1.1 增补：四库结构（指标 / 文献 / 会话 / 账号）与迁移并发策略（13 节）** |
-| `docs/演示讲解稿.docx` / `docs/演示流程文档.docx` | 现场讲解脚本与演示动线 |
-| `docs/监控日志设计方案.md` / `docs/升级设计方案-数据层与中文检索.md` | 两份专项设计说明 |
+| `docs/监控日志设计方案.md` | 日志事件清单、双文件轮转、request_id 全链路、访问日志与审计 |
+| `docs/升级设计方案-数据层与中文检索.md` | 四库演进（内存/JSON → SQLite）与中文检索的分层设计 |
+| `docs/*.png` | 界面与线上实况截图（外壳 / 报告 / 词云 / Top100 / 登录页桌面与移动端） |
+
+> 面向评审的过程材料（需求评审、竞品调查、开发实施、数据库设计、演示稿）**不在代码仓库内**，
+> 由本地 `../交付材料/` 单独保管——代码仓库只放运行这个服务真正需要的东西。
 
 ## 快速启动
 
@@ -186,6 +185,10 @@ npm run build && npm run preview
 | `ADMIN_CONTACT` | 额度用尽时展示的联系方式 | 空 |
 | `ACCESS_CODE` | 旧共享口令通道（运维用 `X-Access-Code` 头）；服务器已改纯账号制故留空 | 空 |
 | `LOG_DIR` / `LOG_LEVEL` | 监控日志目录与级别（双文件按天轮转） | `backend/logs` / INFO |
+| `LOGIN_MAX_FAILS` / `LOGIN_LOCK_SECONDS` | 登录失败锁定：同一 IP+用户名窗口内失败上限与冷却秒数（0=关闭） | 8 / 300 |
+| `RATE_LIMIT_PER_MIN` | 每个 IP 每分钟的接口调用上限（`/api/health` 豁免） | 300 |
+| `ANALYZE_RATE_PER_MIN` | 每个 IP 每分钟的分析调用上限（最贵的两个端点单列） | 30 |
+| `REGISTER_PER_DAY` | 每个 IP 每天可自助注册的账号数（挡批量注册刷额度） | 3 |
 
 ## 账号、权限与免费试用额度（v3 新增）
 
@@ -202,7 +205,23 @@ npm run build && npm run preview
 | 超限提示 | 非流式：403 + 可读文案；**流式端点回 SSE `error` 事件**——`EventSource` 读不到 4xx 响应体，只能走事件通道；文案带 `ADMIN_CONTACT` |
 | 管理后台 | 用户管理（建号 / 重置密码 / 禁用 / 删除 / **重置试用次数**）+ 全部会话；服务端同样做自我保护与「最后一名管理员」保护 |
 
-> 诚实边界：额度按账号计，**同一人可注册多个账号绕过**——这是试用漏斗形态的固有边界；要严格限制需再加设备/IP 维度或关闭自助注册。
+### 访问防护（2026-10-14 加固）
+
+| 防护 | 做法 | 为什么 |
+|---|---|---|
+| 登录 cookie `HttpOnly` | 登录凭证对前端 JS 不可见（同源请求与 EventSource 仍自动携带，链路零改动） | 一旦页面出现 XSS，攻击者也偷不走登录态 |
+| 登录失败锁定 | 同一「IP + 用户名」在 `LOGIN_LOCK_SECONDS` 内失败达 `LOGIN_MAX_FAILS` 次即冷却，返回 `429 + Retry-After`；**锁定期间不再跑密码校验** | 挡住撞库；不跑 PBKDF2 也避免把自己变成爆破的算力放大器。成功登录立即清零 |
+| 接口速率限制 | 按 IP 滑动窗口（60s）：普通接口 `RATE_LIMIT_PER_MIN`，分析类单列 `ANALYZE_RATE_PER_MIN`；`/api/health` 豁免 | 防止单个来源刷爆 NCBI / 百炼额度；探活不能被限流，否则监控会误判服务挂了 |
+| 注册限流 | 每 IP 每天最多 `REGISTER_PER_DAY` 个自助注册账号（首引导那次不受限） | 额度按账号计——不限注册，额度就形同虚设 |
+
+实现见 `backend/app/guard.py`（进程内滑动窗口，零新依赖；阈值**现读 config**，改配置即生效）。
+回归见 `backend/scripts/test_guard.py`（19 项：HttpOnly、锁定与解锁、health 豁免、分析额度、注册限流、关闭后回到加固前行为）。
+
+> 边界（如实说明）：计数不跨进程/不跨重启，**多实例部署会各自计数**（届时换 Redis，只改 guard.py 一个文件）；
+> 按 IP 计量会把同一 NAT 后的用户合并计数；攻击者换 IP 可绕过——真正的兜底是按账号计的试用额度。
+> 仍未做：全站 HTTPS（当前 http 明文，`ACCESS_COOKIE_SECURE=1` 需配合 HTTPS）。
+
+> 诚实边界：额度按账号计，**同一人可注册多个账号绕过**（现由「注册限流」抬高成本）——这是试用漏斗形态的固有边界；要严格限制可关闭自助注册。
 
 ## 监控日志（v3 新增）
 
@@ -235,6 +254,33 @@ npm run build && npm run preview
 | `README.md` | 部署手册（含踩坑清单与实测记录） |
 
 实测（阿里云轻量 2 核 2G / Ubuntu 24.04）：容器内存约 150MB、启动约 105 秒（载入 18MB 指标库），只占 8000 一个端口，不触碰宿主机已有 nginx。
+
+## 备份与恢复
+
+```bash
+sh deploy/backup.sh                 # 默认写 deploy/backups/，保留 7 份
+KEEP=14 sh deploy/backup.sh         # 保留 14 份
+OUT=/mnt/nas/pa sh deploy/backup.sh # 备份到另一块盘（推荐，防灾）
+```
+
+- 用 sqlite3 的**在线备份 API**（不是 `cp`）：服务运行中也能拿到一致快照，不阻塞写入；
+  备份完对副本跑 `PRAGMA integrity_check`，把「备份其实坏了」当场暴露。
+- 内容：四个库 + 指标快照 json，打成 `pa-backup-<时间戳>.tar.gz`，按份数轮转。
+- 建议加 crontab：`0 3 * * * cd <项目目录> && sh deploy/backup.sh >> deploy/logs/backup.log 2>&1`
+- **恢复**：停容器 → 解包把 `*__*.db` 还原成 `deploy/data/<库名>.db` → 起容器（步骤见 `deploy/README.md`）。
+- 边界：本脚本只做本机快照 + 轮转，**不含异地容灾**；要真防灾请把 `--out` 指到另一块盘或远端挂载点。
+
+## 持续集成（CI）
+
+`.github/workflows/ci.yml`：push / PR 自动跑
+
+| 作业 | 内容 |
+|---|---|
+| 后端回归 | 导入自检 + **129 项离线回归**（防护 19 / 鉴权 41 / 隔离 26 / 注册 16 / 额度 27）+ 备份脚本自检 |
+| 前端构建 | `npm ci` + `npm run build`（含 `tsc -b` 类型检查） |
+
+回归全部离线（临时库 + 预置缓存，不碰 NCBI 与大模型），所以 CI 不花额度也不 flaky；
+上线仍走 `deploy/sync-to-server.sh`（手动确认，CI 不直接发布）。
 
 ## 数据来源（期刊 IF / 分区）
 
@@ -304,7 +350,8 @@ PubMed 官方不返回影响因子与分区，因此指标数据集在**构建�
 - 主干为 `main`；约定是功能改动走 `feat|fix|refactor|docs|chore/<scope>` 分支合入（早期提交里也有直接在 `main` 上的，历史保留不改）。
 - 分支命名：`feat/<scope>`、`fix/<scope>`、`refactor/<scope>`、`docs/<scope>`、`chore/<scope>`。
 - 提交信息用 Conventional Commits，标题一行说清「做了什么」，正文写「为什么这么做」与影响面。
-- 提交前跑通：前端 `npm run build`（含 `tsc -b` 类型检查）、后端 `curl /api/health` 与一次 `/api/analyze` 真实请求。
+- 提交前跑通：前端 `npm run build`（含 `tsc -b` 类型检查）、后端 `curl /api/health?deep=1` 与一次 `/api/analyze` 真实请求；
+  改鉴权/额度/防护逻辑时，五套回归（`scripts/test_*.py`，共 129 项）必须全绿——CI 也会跑同一批。
 - **密钥与运行期数据不入库**（规则见 `.gitignore`，可 `git check-ignore -v <path>` 复核）：`.env` 类文件、`backend/data/auth_secret.key`（签名密钥，泄漏即可伪造登录态）、`backend/data/*.db` 及其 `-wal`/`-shm` 伴生文件（literature / sessions / users；journal_metrics.db 为可重生的只读指标库，需要随包发布时 `git add -f`）、`backend/cache/`、`backend/logs/`、`deploy/{data,cache,logs,certs}/`、`deploy/.env*`、`frontend/dist/`、`node_modules/`、`output/`。
 - **发布形态下的数据文件**：随包发布的是 `backend/data/journal_metrics.json`（OpenAlex 快照，2,748 本）与容器内的 `deploy/data/*.db`（运行期卷，不在仓库里）。
 
